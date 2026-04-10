@@ -46,16 +46,47 @@ void Renderer::setupScene()
 		skybox_cubemap = nullptr;
 }
 
+void Renderer::parseNode(SCN::Node* node) {
+	if(!node) return;
+
+	if(node->mesh && node->material) {
+		// Tarea 3.5: Frustum culling (EXTRA)
+		// 1. Calculamos la BoundingBox en coordenadas de munto (World Space) usando la matriz global del nodo
+		BoundingBox global_aabb = transformBoundingBox(node->getGlobalMatrix(), node->mesh->box);
+
+		// 2. Comprobamos si choca con el frustum de la cámara. 
+		// Si devuelve CLIP_OUTSIDE (0), significa que no se ve y lo ignoramos.
+		if (Camera::current->testBoxInFrustum(global_aabb.center, global_aabb.halfsize) != CLIP_OUTSIDE) {
+			render_list.push_back({
+				node->mesh,
+				node->material,
+				node->getGlobalMatrix(),
+				node->getGlobalMatrix().getTranslation().distance(Camera::current->eye)
+			});
+		}
+	}
+
+	for (int i = 0; i < node->children.size(); i++) {
+		parseNode(node->children[i]);
+	}
+}
+
 void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	// HERE =====================
 	// TODO: GENERATE RENDERABLES
 	// ==========================
-
+	render_list.clear();
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
 
 		if (!entity->visible) {
 			continue;
+		}
+		if(entity->getType() == SCN::eEntityType::PREFAB){
+			//Convertimos el entity base a PrefabEntity
+			PrefabEntity* prefabEntity = (PrefabEntity*)entity; 
+			//Empezamos la magia pasándole la raíz y la cámara
+			parseNode(&prefabEntity->root); 
 		}
 
 		// Store Prefab Entitys
@@ -65,7 +96,24 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 		// Store Lights
 		// ...
 	}
-	
+
+	// Tarea 3.4: Ordenar Render Calls
+	std::sort(render_list.begin(), render_list.end(), [](const sRenderable& a, const sRenderable& b) {
+		bool a_transparent = (a.material->alpha_mode == SCN::eAlphaMode::BLEND);
+		bool b_transparent = (b.material->alpha_mode == SCN::eAlphaMode::BLEND);
+
+		// Si uno es opaco y el otro transparente, el opaco siempre va primero
+		if (!a_transparent && b_transparent) return true;
+		if (a_transparent && !b_transparent) return false;
+
+		// Si ambos son transparentes: de LEJOS a CERCA (mayor distancia primero)
+		if (a_transparent && b_transparent) {
+			return a.distance_to_camera > b.distance_to_camera;
+		}
+
+		// Si ambos son opacos (o mask): de CERCA a LEJOS (menor distancia primero para ahorrar overdraw)
+		return a.distance_to_camera < b.distance_to_camera;
+	});
 }
 
 void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
@@ -89,6 +137,9 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	// HERE =====================
 	// TODO: RENDER RENDERABLES
 	// ==========================
+	for (int i = 0; i < render_list.size(); i++) {
+		renderMeshWithMaterial(render_list[i].matrix, render_list[i].mesh, render_list[i].material);
+	}
 }
 
 

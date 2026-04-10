@@ -3,6 +3,7 @@
 #include "prefab.h"
 
 #include "light.h"
+#include <vector>
 
 //forward declarations
 class Camera;
@@ -14,10 +15,15 @@ namespace GFX {
 }
 
 namespace SCN {
-
+  
 	class Prefab;
 	class Material;
-
+  struct sRenderable {
+    GFX::Mesh *mesh;
+    SCN::Material *material;
+    Matrix44 matrix;
+    float distance_to_camera; //esto sirve para ordenar por distancia
+  };
 	// This class is in charge of rendering anything in our system.
 	// Separating the render from anything else makes the code cleaner
 	class Renderer
@@ -25,7 +31,7 @@ namespace SCN {
 	public:
 		bool render_wireframe;
 		bool render_boundaries;
-
+    std::vector <sRenderable> render_list;
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;
@@ -38,6 +44,7 @@ namespace SCN {
 
 		//add here your functions
 		//...
+    void parseNode(SCN::Node* node);
 
 		void parseSceneEntities(SCN::Scene* scene, Camera* camera);
 
