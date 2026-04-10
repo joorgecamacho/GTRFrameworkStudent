@@ -1621,11 +1621,11 @@ std::vector<Vector3f> generateSpherePoints(int num, float radius, bool hemi) {
 
 	for (int i = 0; i < num; i += 1) {
 		Vector3f& p = points[i];
-		float u = random();
-		float v = random();
+		float u = (float)rand() / (float)RAND_MAX;
+		float v = (float)rand() / (float)RAND_MAX;
 		float theta = u * 2.0 * PI;
 		float phi = acos(2.0 * v - 1.0);
-		float r = cbrt(random() * 0.9 + 0.1) * radius;
+		float r = cbrt(((float)rand() / (float)RAND_MAX) * 0.9 + 0.1) * radius;
 		float sinTheta = sin(theta);
 		float cosTheta = cos(theta);
 		float sinPhi = sin(phi);
