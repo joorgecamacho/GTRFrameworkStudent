@@ -4,6 +4,7 @@ texture basic.vs texture.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
 multi basic.vs multi.fs
+phong_single basic.vs phong_single.fs
 
 \perturbNormal
 
@@ -185,6 +186,91 @@ void main()
 
 	FragColor = color;
 	NormalColor = vec4(N,1.0);
+}
+
+\phong_single.fs
+
+#version 330 core
+
+in vec3 v_position;
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+in vec4 v_color;
+
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_alpha_cutoff;
+uniform float u_shininess;
+
+uniform vec3 u_camera_position;
+uniform vec3 u_ambient_light;
+
+#define MAX_LIGHTS 16
+uniform int u_num_lights;
+uniform vec3 u_light_positions[MAX_LIGHTS];
+uniform vec3 u_light_colors[MAX_LIGHTS];
+uniform float u_light_intensities[MAX_LIGHTS];
+uniform vec3 u_light_directions[MAX_LIGHTS];
+uniform int u_light_types[MAX_LIGHTS];
+uniform vec2 u_light_cones[MAX_LIGHTS];
+
+out vec4 FragColor;
+
+void main()
+{
+	vec4 base_color = u_color * texture(u_texture, v_uv);
+	if (base_color.a < u_alpha_cutoff)
+		discard;
+
+	vec3 N = normalize(v_normal);
+	vec3 V = normalize(u_camera_position - v_world_position);
+
+	vec3 final_rgb = base_color.rgb * (u_ambient_light + vec3(0.03));
+	int num_lights = min(u_num_lights, MAX_LIGHTS);
+	for (int i = 0; i < num_lights; ++i)
+	{
+		int light_type = u_light_types[i];
+		vec3 L_dir = u_light_positions[i] - v_world_position;
+		float distance_to_light = length(L_dir);
+		vec3 L = distance_to_light > 0.0001 ? normalize(L_dir) : vec3(0.0, 0.0, 0.0);
+
+		float attenuation = u_light_intensities[i] / (1.0 + distance_to_light * distance_to_light);
+
+		// Directional light
+		if (light_type == 3)
+		{
+			vec3 D = normalize(u_light_directions[i]);
+			L = normalize(-D);
+			attenuation = u_light_intensities[i];
+		}
+		//point light with cone attenuation
+		else if (light_type == 2)
+		{
+			vec3 D = normalize(u_light_directions[i]);
+			float inner_angle = u_light_cones[i].x;
+			float outer_angle = u_light_cones[i].y;
+			float cos_inner = cos(inner_angle);
+			float cos_outer = cos(outer_angle);
+
+			float cos_theta = dot(D, normalize(-L));
+
+			//cone
+			float spot_factor = clamp((cos_theta - cos_outer) / max(cos_inner - cos_outer, 0.0001), 0.0, 1.0);
+			attenuation *= spot_factor;
+		}
+
+		float NdotL = abs(dot(N, L));
+		vec3 diffuse = base_color.rgb * u_light_colors[i] * NdotL * attenuation;
+
+		vec3 R = reflect(-L, N);
+		float spec_power = pow(abs(dot(R, V)), max(u_shininess, 1.0));
+		vec3 specular = u_light_colors[i] * spec_power * attenuation;
+
+		final_rgb += diffuse + specular;
+	}
+
+	FragColor = vec4(final_rgb, base_color.a);
 }
 
 

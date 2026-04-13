@@ -48,9 +48,7 @@ void Renderer::setupScene()
 
 void Renderer::parseNode(SCN::Node* node) {
 	if(!node) return;
-
-	if(node->mesh && node->material) {
-		// Tarea 3.5: Frustum culling (EXTRA)
+		/*// Tarea 3.5: Frustum culling (EXTRA)
 		// 1. Calculamos la BoundingBox en coordenadas de munto (World Space) usando la matriz global del nodo
 		BoundingBox global_aabb = transformBoundingBox(node->getGlobalMatrix(), node->mesh->box);
 
@@ -62,8 +60,16 @@ void Renderer::parseNode(SCN::Node* node) {
 				node->material,
 				node->getGlobalMatrix(),
 				node->getGlobalMatrix().getTranslation().distance(Camera::current->eye)
+			});*/	
+	if (node->mesh && node->material) {
+		// For Assignment 2 we keep scene parsing robust and always register renderables.
+		// Frustum culling can be re-enabled later if needed.
+		render_list.push_back({
+			node->mesh,
+			node->material,
+			node->getGlobalMatrix(),
+			node->getGlobalMatrix().getTranslation().distance(Camera::current->eye)
 			});
-		}
 	}
 
 	for (int i = 0; i < node->children.size(); i++) {
@@ -76,6 +82,7 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	// TODO: GENERATE RENDERABLES
 	// ==========================
 	render_list.clear();
+	light_list.clear();
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
 
@@ -87,6 +94,12 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 			PrefabEntity* prefabEntity = (PrefabEntity*)entity; 
 			//Empezamos la magia pasándole la raíz y la cámara
 			parseNode(&prefabEntity->root); 
+		}
+		if (entity->getType() == SCN::eEntityType::LIGHT) {
+			LightEntity* light = (LightEntity*)entity;
+			if (light->light_type != SCN::eLightType::NO_LIGHT && light->intensity > 0.0f) {
+				light_list.push_back(light);
+			}
 		}
 
 		// Store Prefab Entitys
@@ -198,9 +211,9 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	glEnable(GL_DEPTH_TEST);
 
 	//chose a shader
-	shader = GFX::Shader::Get("texture");
+	//shader = GFX::Shader::Get("texture");
 
-    assert(glGetError() == GL_NO_ERROR);
+	shader = GFX::Shader::Get("phong_single");
 
 	//no shader? then nothing to render
 	if (!shader)
@@ -215,6 +228,68 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	// Upload camera uniforms
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
+
+	// Upload scene/light uniforms for multi-light phong
+	if (shader)
+	{
+		const int MAX_LIGHTS = 16;
+		shader->setUniform("u_ambient_light", scene ? scene->ambient_light : Vector3f(0.1f, 0.1f, 0.1f));
+
+		int light_count = (int)light_list.size();
+		if (light_count > MAX_LIGHTS)
+			light_count = MAX_LIGHTS;
+		shader->setUniform("u_num_lights", light_count);
+
+		if (light_count > 0)
+		{
+			std::vector<float> light_positions;
+			std::vector<float> light_colors;
+			std::vector<float> light_intensities;
+			std::vector<float> light_directions;
+			std::vector<int> light_types;
+			std::vector<float> light_cones;
+			light_positions.reserve(light_count * 3);
+			light_colors.reserve(light_count * 3);
+			light_intensities.reserve(light_count);
+			light_directions.reserve(light_count * 3);
+			light_types.reserve(light_count);
+			light_cones.reserve(light_count * 2);
+
+			for (int i = 0; i < light_count; ++i)
+			{
+				SCN::LightEntity* light = light_list[i];
+				Vector3f light_pos = light->root.model.getTranslation();
+				light_positions.push_back(light_pos.x);
+				light_positions.push_back(light_pos.y);
+				light_positions.push_back(light_pos.z);
+
+				light_colors.push_back(light->color.x);
+				light_colors.push_back(light->color.y);
+				light_colors.push_back(light->color.z);
+
+				light_intensities.push_back(light->intensity);
+
+				Vector3f light_dir = light->root.model.frontVector();
+				light_directions.push_back(light_dir.x);
+				light_directions.push_back(light_dir.y);
+				light_directions.push_back(light_dir.z);
+
+				light_types.push_back((int)light->light_type);
+
+				//cone angles 
+				light_cones.push_back(light->cone_info.x * DEG2RAD); //inner angle
+				light_cones.push_back(light->cone_info.y * DEG2RAD); //outer angle
+			}
+
+			shader->setUniform3Array("u_light_positions", light_positions.data(), light_count);
+			shader->setUniform3Array("u_light_colors", light_colors.data(), light_count);
+			shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_count);
+			shader->setUniform3Array("u_light_directions", light_directions.data(), light_count);
+			shader->setUniform1Array("u_light_types", light_types.data(), light_count);
+			shader->setUniform2Array("u_light_cones", light_cones.data(), light_count);
+		}
+	}
+
 
 	// Upload time, for cool shader effects
 	float t = getTime();

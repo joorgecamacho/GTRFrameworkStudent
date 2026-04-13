@@ -32,6 +32,7 @@ namespace SCN {
 		bool render_wireframe;
 		bool render_boundaries;
     std::vector <sRenderable> render_list;
+	std::vector<SCN::LightEntity*> light_list;
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;
