@@ -559,6 +559,8 @@ void SceneEditor::inspectObject(SCN::Material* material)
 	ImGui::SliderFloat("Alpha Cutoff", &material->alpha_cutoff, 0.0f, 1.0f);
 	ImGui::ColorEdit4("Color", material->color.v); // Edit 4 floats representing a color + alpha
 	ImGui::ColorEdit3("Emissive", material->emissive_factor.v);
+	ImGui::SliderFloat("Shininess", &material->shininess, 0.0f, 100.0f);
+
 	for (size_t i = 0; i < SCN::eTextureChannel::ALL; ++i)
 	{
 		if (material->textures[i].texture && ImGui::TreeNode( &material->textures[i], SCN::texture_channel_str[i] ))

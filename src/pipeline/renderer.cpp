@@ -27,6 +27,7 @@ Renderer::Renderer(const char* shader_atlas_filename)
 {
 	render_wireframe = false;
 	render_boundaries = false;
+	single_pass_mode = true;
 	scene = nullptr;
 	skybox_cubemap = nullptr;
 
@@ -83,18 +84,23 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	// ==========================
 	render_list.clear();
 	light_list.clear();
+	
+	//iteramos en todas las entidades de la escena
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
 
+		//si la entidad no es visible no la renderizamos
 		if (!entity->visible) {
 			continue;
 		}
+		//LAB1 ASSIG 1: si la entidad es un prefab, un objeti que ya exisitia, lo cogemos y metemos todos sus nodos en la lista de objetos a renderizar
 		if(entity->getType() == SCN::eEntityType::PREFAB){
 			//Convertimos el entity base a PrefabEntity
 			PrefabEntity* prefabEntity = (PrefabEntity*)entity; 
 			//Empezamos la magia pasándole la raíz y la cámara
 			parseNode(&prefabEntity->root); 
 		}
+		//EJERCICIO 3.1 DE LAB 1 ASSIGNMENT 2: si la entudad es una luz la metemos en la lista de luces
 		if (entity->getType() == SCN::eEntityType::LIGHT) {
 			LightEntity* light = (LightEntity*)entity;
 			if (light->light_type != SCN::eLightType::NO_LIGHT && light->intensity > 0.0f) {
@@ -211,9 +217,11 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	glEnable(GL_DEPTH_TEST);
 
 	//chose a shader
-	//shader = GFX::Shader::Get("texture");
-
-	shader = GFX::Shader::Get("phong_single");
+	if (single_pass_mode) {
+		shader = GFX::Shader::Get("phong_single");
+	} else {
+		shader = GFX::Shader::Get("texture");
+	}
 
 	//no shader? then nothing to render
 	if (!shader)
@@ -317,6 +325,7 @@ void Renderer::showUI()
 		
 	ImGui::Checkbox("Wireframe", &render_wireframe);
 	ImGui::Checkbox("Boundaries", &render_boundaries);
+	ImGui::Checkbox("Single Pass Mode", &single_pass_mode);
 
 	//add here your stuff
 	//...

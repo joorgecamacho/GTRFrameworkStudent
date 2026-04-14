@@ -31,8 +31,9 @@ namespace SCN {
 	public:
 		bool render_wireframe;
 		bool render_boundaries;
-    std::vector <sRenderable> render_list;
-	std::vector<SCN::LightEntity*> light_list;
+		bool single_pass_mode;
+    	std::vector <sRenderable> render_list; //donde guardamos todos los objetos a renderizar
+		std::vector<SCN::LightEntity*> light_list; //Donde guardamos todas nuestras luces
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;

@@ -200,6 +200,7 @@ in vec4 v_color;
 
 uniform vec4 u_color;
 uniform sampler2D u_texture;
+uniform sampler2D u_normal_texture;
 uniform float u_alpha_cutoff;
 uniform float u_shininess;
 
@@ -215,6 +216,8 @@ uniform vec3 u_light_directions[MAX_LIGHTS];
 uniform int u_light_types[MAX_LIGHTS];
 uniform vec2 u_light_cones[MAX_LIGHTS];
 
+#include "perturbNormal"
+
 out vec4 FragColor;
 
 void main()
@@ -224,6 +227,10 @@ void main()
 		discard;
 
 	vec3 N = normalize(v_normal);
+	vec3 normal_pixel_color = texture(u_normal_texture, v_uv).rgb;
+	vec3 normal_vector = normal_pixel_color * 2.0 - 1.0;
+	N = perturbNormal(N, v_world_position, v_uv, normal_vector);
+
 	vec3 V = normalize(u_camera_position - v_world_position);
 
 	vec3 final_rgb = base_color.rgb * (u_ambient_light + vec3(0.03));
