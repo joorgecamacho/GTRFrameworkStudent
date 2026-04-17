@@ -206,6 +206,11 @@ uniform float u_shininess;
 
 uniform vec3 u_camera_position;
 uniform vec3 u_ambient_light;
+uniform sampler2D u_shadowmap;
+uniform mat4 u_light_viewprojection;
+uniform int u_shadow_enabled;
+uniform int u_shadow_light_index;
+uniform float u_shadow_bias;
 
 #define MAX_LIGHTS 16
 uniform int u_num_lights;
@@ -244,7 +249,7 @@ void main()
 
 		float attenuation = u_light_intensities[i] / (1.0 + distance_to_light * distance_to_light);
 
-		// Directional light
+		//directional light
 		if (light_type == 3)
 		{
 			vec3 D = normalize(u_light_directions[i]);
@@ -265,6 +270,27 @@ void main()
 			//cone
 			float spot_factor = clamp((cos_theta - cos_outer) / max(cos_inner - cos_outer, 0.0001), 0.0, 1.0);
 			attenuation *= spot_factor;
+		}
+
+		//assignment 3.3
+		if (u_shadow_enabled == 1 && i == u_shadow_light_index)
+		{
+			vec4 light_h = u_light_viewprojection * vec4(v_world_position, 1.0);
+			float safe_w = max(light_h.w, 0.00001);
+			vec2 shadow_uv = (light_h.xy / safe_w) * 0.5 + vec2(0.5);
+			// Assignment 3.4.1: apply bias before dividing by W.
+			float biased_ndc_z = (light_h.z - u_shadow_bias) / safe_w;
+			float current_depth = biased_ndc_z * 0.5 + 0.5;
+
+			if (light_h.w > 0.0 &&
+				shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 &&
+				shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 &&
+				current_depth >= 0.0 && current_depth <= 1.0)
+			{
+				float stored_depth = texture(u_shadowmap, shadow_uv).r;
+				if (current_depth > stored_depth)
+					continue;
+			}
 		}
 
 		float NdotL = abs(dot(N, L));

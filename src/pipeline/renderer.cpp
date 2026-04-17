@@ -16,6 +16,7 @@
 #include "../core/ui.h"
 
 #include "scene.h"
+#include <cmath>
 
 
 using namespace SCN;
@@ -28,6 +29,13 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	render_wireframe = false;
 	render_boundaries = false;
 	single_pass_mode = true;
+	shadowmap_resolution = 1024;
+	shadow_light_index = 3;
+	active_shadow_light_index = -1;
+	shadow_bias = 0.0015f;
+	shadow_cull_front_faces = true;
+	shadowmap_fbo = nullptr;
+	shadow_camera = nullptr;
 	scene = nullptr;
 	skybox_cubemap = nullptr;
 
@@ -35,8 +43,163 @@ Renderer::Renderer(const char* shader_atlas_filename)
 		exit(1);
 	GFX::checkGLErrors();
 
+	shadowmap_fbo = new GFX::FBO();
+	if (!shadowmap_fbo->setDepthOnly(shadowmap_resolution, shadowmap_resolution))
+	{
+		delete shadowmap_fbo;
+		shadowmap_fbo = nullptr;
+	}
+	shadow_camera = new Camera();
+
 	sphere.createSphere(1.0f);
 	sphere.uploadToVRAM();
+}
+
+Renderer::~Renderer()
+{
+	if (shadowmap_fbo)
+	{
+		delete shadowmap_fbo;
+		shadowmap_fbo = nullptr;
+	}
+	if (shadow_camera)
+	{
+		delete shadow_camera;
+		shadow_camera = nullptr;
+	}
+}
+
+void Renderer::updateShadowCamera()//3.2.1
+{
+	if (!shadow_camera || light_list.empty())
+	{
+		active_shadow_light_index = -1;
+		return;
+	}
+
+	LightEntity* shadow_light = nullptr;
+	int selected_light_index = -1;
+	if (shadow_light_index >= 0 && shadow_light_index < (int)light_list.size())
+	{
+		shadow_light = light_list[shadow_light_index];
+		selected_light_index = shadow_light_index;
+	}
+
+	if (!shadow_light || !shadow_light->cast_shadows)
+	{
+		for (int i = 0; i < (int)light_list.size(); ++i)
+		{
+			LightEntity* light = light_list[i];
+			if (light && light->cast_shadows)
+			{
+				shadow_light = light;
+				selected_light_index = i;
+				break;
+			}
+		}
+	}
+
+	if (!shadow_light)
+	{
+		active_shadow_light_index = -1;
+		return;
+	}
+	active_shadow_light_index = selected_light_index;
+
+	Vector3f light_pos = shadow_light->root.model.getTranslation();
+	Vector3f light_dir = shadow_light->root.model.frontVector().normalize();
+	Vector3f target = light_pos + light_dir;
+	Vector3f up = Vector3f(0.0f, 1.0f, 0.0f);
+	float near_plane = (shadow_light->near_distance > 0.01f) ? shadow_light->near_distance : 0.01f;
+	float min_far = near_plane + 0.01f;
+	float far_plane = (shadow_light->max_distance > min_far) ? shadow_light->max_distance : min_far;
+
+	if (shadow_light->light_type == SCN::eLightType::SPOT)
+	{
+		float full_fov_deg = shadow_light->cone_info.y * 2.0f;
+		if (full_fov_deg < 1.0f)
+			full_fov_deg = 1.0f;
+		target = light_pos + light_dir;
+		shadow_camera->lookAt(light_pos, target, up);
+		shadow_camera->setPerspective(full_fov_deg, 1.0f, near_plane, far_plane);
+	}
+	else
+	{
+		float ortho_area = std::abs(shadow_light->area);
+		if (ortho_area < 1.0f)
+			ortho_area = 50.0f;
+		if (ortho_area > 10.0f)
+			ortho_area = 10.0f;
+		Vector3f focus = Camera::current ? Camera::current->center : Vector3f(0.0f, 0.0f, 0.0f);
+		float light_distance = ortho_area * 0.75f;
+		light_pos = focus - light_dir * light_distance;
+		target = focus;
+		shadow_camera->lookAt(light_pos, target, up);
+		shadow_camera->setOrthographic(-ortho_area, ortho_area, -ortho_area, ortho_area, near_plane, far_plane);
+	}
+}
+
+void Renderer::renderShadowMap()//3.2.1
+{
+	if (!shadowmap_fbo || !shadow_camera)
+		return;
+
+	GFX::Shader* shadow_shader = GFX::Shader::Get("texture");
+	if (!shadow_shader)
+		return;
+
+	//save the  current viewport and camera to restore the previous frame state at the end
+	GLint previous_viewport[4];
+	glGetIntegerv(GL_VIEWPORT, previous_viewport);
+	Camera* previous_camera = Camera::current;
+	GLboolean was_cull_enabled = glIsEnabled(GL_CULL_FACE);
+	GLint previous_cull_face_mode = GL_BACK;
+	glGetIntegerv(GL_CULL_FACE_MODE, &previous_cull_face_mode);
+
+	shadowmap_fbo->bind();
+	glViewport(0, 0, shadowmap_resolution, shadowmap_resolution);
+	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	glClear(GL_DEPTH_BUFFER_BIT);
+
+	shadow_camera->enable();
+	shadow_shader->enable();
+	for (const sRenderable& renderable : render_list)
+	{
+		if (!renderable.mesh || !renderable.material)
+			continue;
+
+		if (renderable.material->alpha_mode == SCN::eAlphaMode::BLEND)
+			continue;
+
+		renderable.material->bind(shadow_shader);
+		if (shadow_cull_front_faces)
+		{
+			glEnable(GL_CULL_FACE);
+			glCullFace(GL_FRONT);
+		}
+		else
+		{
+			glDisable(GL_CULL_FACE);
+		}
+		shadow_shader->setUniform("u_model", renderable.matrix);
+		shadow_shader->setUniform("u_viewprojection", shadow_camera->viewprojection_matrix);
+		shadow_shader->setUniform("u_camera_position", shadow_camera->eye);
+		renderable.mesh->render(GL_TRIANGLES);
+	}
+	shadow_shader->disable();
+
+	shadowmap_fbo->unbind();
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	if (was_cull_enabled)
+		glEnable(GL_CULL_FACE);
+	else
+		glDisable(GL_CULL_FACE);
+	glCullFace(previous_cull_face_mode);
+	glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
+	if (previous_camera)
+		previous_camera->enable();
 }
 
 void Renderer::setupScene()
@@ -141,6 +304,8 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	setupScene();
 
 	parseSceneEntities(scene, camera);
+	updateShadowCamera();
+	renderShadowMap();
 
 	//set the clear color (the background color)
 	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
@@ -237,7 +402,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
 
-	// Upload scene/light uniforms for multi-light phong
+	//part of assigment 2 upload light information to the shader
 	if (shader)
 	{
 		const int MAX_LIGHTS = 16;
@@ -298,12 +463,25 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		}
 	}
 
+	//assignment 3.3 send shadow map and light camera 
+	if (single_pass_mode)
+	{
+		bool shadow_enabled = shadowmap_fbo && shadowmap_fbo->depth_texture && shadow_camera && active_shadow_light_index >= 0;
+		shader->setUniform("u_shadow_enabled", shadow_enabled ? 1 : 0);
+		shader->setUniform("u_shadow_light_index", active_shadow_light_index);
+		if (shadow_enabled)
+		{
+			shader->setUniform("u_shadowmap", shadowmap_fbo->depth_texture, 7);
+			shader->setUniform("u_light_viewprojection", shadow_camera->viewprojection_matrix);
+			shader->setUniform("u_shadow_bias", shadow_bias);
+		}
+	}
 
-	// Upload time, for cool shader effects
+
+	//upload time for shader effects
 	float t = getTime();
 	shader->setUniform("u_time", t );
 
-	// Render just the verticies as a wireframe
 	if (render_wireframe)
 		glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
@@ -326,6 +504,8 @@ void Renderer::showUI()
 	ImGui::Checkbox("Wireframe", &render_wireframe);
 	ImGui::Checkbox("Boundaries", &render_boundaries);
 	ImGui::Checkbox("Single Pass Mode", &single_pass_mode);
+	ImGui::DragFloat("Shadow Bias", &shadow_bias, 0.0001f, 0.0f, 0.02f, "%.5f");
+	ImGui::Checkbox("Shadow Cull Front Faces", &shadow_cull_front_faces);
 
 	//add here your stuff
 	//...
