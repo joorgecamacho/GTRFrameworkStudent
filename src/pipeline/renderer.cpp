@@ -95,6 +95,10 @@ void Renderer::updateShadowCamera()
 		light->light_type != SCN::eLightType::DIRECTIONAL)
 		return; // pointlights are skipped per the slides
 
+	// Check the cast_shadows property from the scene entity
+	if (!light->cast_shadows)
+		return;
+
 	shadow_light = light;
 
 	// Position & direction from the light entity's transform (like the slide).
