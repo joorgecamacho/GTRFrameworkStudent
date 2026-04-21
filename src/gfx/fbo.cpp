@@ -214,6 +214,10 @@ namespace GFX
 		//create texture
 		depth_texture = new Texture(width, height, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, false);
 		glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture->texture_id, 0);
+		glBindTexture(GL_TEXTURE_2D, depth_texture->texture_id);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+		glBindTexture(GL_TEXTURE_2D, 0);
 
 		GLenum status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
 		if (status != GL_FRAMEBUFFER_COMPLETE_EXT)
@@ -232,7 +236,7 @@ namespace GFX
 		assert(tex && "framebuffer without texture");
 		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fbo_id);
 		checkGLErrors();
-		glPushAttrib(GL_VIEWPORT_BIT);
+		// glPushAttrib(GL_VIEWPORT_BIT);
 		glDrawBuffers(4, bufs);
 		glViewport(0, 0, (int)tex->width, (int)tex->height);
 		assert(glGetError() == GL_NO_ERROR);
@@ -242,8 +246,8 @@ namespace GFX
 
 	void FBO::unbind()
 	{
-		// output goes to the FBO and it’s attached buffers
-		glPopAttrib();
+		// output goes to the FBO and itï¿½s attached buffers
+		// glPopAttrib();
 		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
 		//glDrawBuffers(1, &one_buffer);
 		assert(glGetError() == GL_NO_ERROR);

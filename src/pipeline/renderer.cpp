@@ -49,6 +49,9 @@ Renderer::Renderer(const char* shader_atlas_filename)
 		delete shadowmap_fbo;
 		shadowmap_fbo = nullptr;
 	}
+	else if (shadowmap_fbo->depth_texture) {
+		shadowmap_fbo->depth_texture->setName("ShadowMap_Depth");
+	}
 	shadow_camera = new Camera();
 
 	sphere.createSphere(1.0f);
@@ -144,7 +147,7 @@ void Renderer::renderShadowMap()//3.2.1
 	if (!shadowmap_fbo || !shadow_camera)
 		return;
 
-	GFX::Shader* shadow_shader = GFX::Shader::Get("texture");
+	GFX::Shader* shadow_shader = GFX::Shader::Get("flat");
 	if (!shadow_shader)
 		return;
 
@@ -156,6 +159,7 @@ void Renderer::renderShadowMap()//3.2.1
 	GLint previous_cull_face_mode = GL_BACK;
 	glGetIntegerv(GL_CULL_FACE_MODE, &previous_cull_face_mode);
 
+	while(glGetError() != GL_NO_ERROR); 
 	shadowmap_fbo->bind();
 	glViewport(0, 0, shadowmap_resolution, shadowmap_resolution);
 	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
