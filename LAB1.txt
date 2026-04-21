@@ -9,35 +9,43 @@ Exercises Completed:
 - 3.4 Ordering Render Calls
 
 Extra Exercises Explanation:
-- 3.5 EXTRA: Frustum culling
+- 3.5 EXTRA: Frustum culling: We used the BoundingBox type and the function transformBoundingBox
+to get the bounding box from the node into global_aabb. Using the function of Camera class testBoxInFrustum
+we can know if an object is inside the camera view field.
 
 Exercises Not Completed:
 
 ASSIGNMENT 2
 Exercises Completed:
-- 3.1 Generate the FBO.
-- 3.2 Render to the shadow map.
-- 3.3 Apply shadow maps
-- 3.5.3 ImGUI
+3.1 Extending our scene representation for lights.
+3.2 Phong lighting with a single lightsource.
+3.3 Extend to multiple lights (Single-pass)
+3.3 Different types of lights
+3.3.1 Directional light
+3.3.2 Spotlight light
+3.4 Normal maps
+3.5 ImGUI
 
 Exercises Not Completed:
-3.5 Extend to support multiple lights, and multiple types of lights.
 
 
 ASSIGNMENT 3
 
 Exercises Completed:
 - 3.1: Generate the FBO.
-- 3.2: Render to the shadow map. Implemented the "light camera" logic with both perspective (spotlight) and orthogonal (directional) projections.
-- 3.3: Apply shadow maps. Implemented shadow coordinate projection and depth comparison in the shader.
-- 3.4: Shadow map error mitigation techniques. Added Shadow Bias to prevent shadow acne and Front-Face Culling during the shadow pass.
-- 3.5.3 ImGUI controls.
+3.2 Render to the shadow map.
+3.2.1 Configure the “light camera”.
+3.2.1 Render the scene to the shadow map.
+3.3 Apply shadow maps
+3.4 Shadow map error mitigation techniques.
+3.4.1 Shadow bias.
+3.4.2 Front face culling
+3.5.3 ImGUI controls.
 
 Exercises Not Completed:
-- 3.5 Extend to support multiple lights, and multiple types of lights.
+3.5 Extend to support multiple lights, and multiple types of lights.
 
 
-Extra Exercises Explanation:
 
 Part we feel specially proud of:
-In general assignment 3 has been hard to us and we feel proud of having advanced that much.
+In general assignment 3 has been hard to us and we feel proud of having advanced that much despite of not completing the multiple lights part.
