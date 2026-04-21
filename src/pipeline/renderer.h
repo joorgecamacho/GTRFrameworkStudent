@@ -32,13 +32,16 @@ namespace SCN {
 		bool render_wireframe;
 		bool render_boundaries;
 		bool single_pass_mode;
-		int shadowmap_resolution;
-		int shadow_light_index;
-		int active_shadow_light_index;
+		int atlas_resolution;
+		int atlas_tile_size;
 		float shadow_bias;
 		bool shadow_cull_front_faces;
 		GFX::FBO* shadowmap_fbo;
 		Camera* shadow_camera;
+
+		Matrix44 shadow_viewprojections[16];
+		Vector4f shadow_atlas_rects[16];
+
     	std::vector <sRenderable> render_list; //donde guardamos todos los objetos a renderizar
 		std::vector<SCN::LightEntity*> light_list; //Donde guardamos todas nuestras luces
 		GFX::Texture* skybox_cubemap;
@@ -54,7 +57,6 @@ namespace SCN {
 
 		//add here your functions
 		//...
-		void updateShadowCamera();
 		void renderShadowMap();
     void parseNode(SCN::Node* node);
 
