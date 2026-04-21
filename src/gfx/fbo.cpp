@@ -6,7 +6,7 @@
 namespace GFX
 {
 
-	FBO::FBO() : bufs{0,0,0,0}
+	FBO::FBO() : bufs{ 0,0,0,0 }
 	{
 		fbo_id = 0;
 		color_textures[0] = color_textures[1] = color_textures[2] = color_textures[3] = NULL;

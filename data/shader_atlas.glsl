@@ -95,15 +95,29 @@ void main()
 
 \flat.fs
 
+// Plain shader used to render the shadow map (assignment 3.2.2).
+// We only need depth, but we keep a lightweight alpha test so that
+// MASK materials (tree leaves, signs, ...) discard transparent pixels
+// and cast correctly shaped shadows.
 #version 330 core
 
+in vec2 v_uv;
+
 uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_alpha_cutoff;
 
 out vec4 FragColor;
 
 void main()
 {
-	FragColor = u_color;
+	// Alpha testing for MASK alpha-mode materials.
+	vec4 c = u_color * texture(u_texture, v_uv);
+	if (c.a < u_alpha_cutoff)
+		discard;
+
+	// Color writes are disabled from the CPU, only depth matters here.
+	FragColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
 
 
@@ -204,15 +218,15 @@ uniform sampler2D u_normal_texture;
 uniform float u_alpha_cutoff;
 uniform float u_shininess;
 
-#define MAX_LIGHTS 16
 uniform vec3 u_camera_position;
 uniform vec3 u_ambient_light;
 uniform sampler2D u_shadowmap;
+uniform mat4 u_light_viewprojection;
 uniform int u_shadow_enabled;
+uniform int u_shadow_light_index;
 uniform float u_shadow_bias;
-uniform mat4 u_light_viewprojections[MAX_LIGHTS];
-uniform vec4 u_light_atlas_rects[MAX_LIGHTS];
 
+#define MAX_LIGHTS 16
 uniform int u_num_lights;
 uniform vec3 u_light_positions[MAX_LIGHTS];
 uniform vec3 u_light_colors[MAX_LIGHTS];
@@ -272,35 +286,24 @@ void main()
 			attenuation *= spot_factor;
 		}
 
-		//assignment 3.3 and 3.5 Shadow Atlas
-		if (u_shadow_enabled == 1)
+		//assignment 3.3
+		if (u_shadow_enabled == 1 && i == u_shadow_light_index)
 		{
-			vec4 atlas_rect = u_light_atlas_rects[i];
-			if (atlas_rect.z > 0.0) // This light has a shadow tile assigned
-			{
-				vec4 light_h = u_light_viewprojections[i] * vec4(v_world_position, 1.0);
-				float safe_w = max(light_h.w, 0.00001);
-				
-				// shadow_uv in [0,1] relative to this light's frustum
-				vec2 shadow_uv = (light_h.xy / safe_w) * 0.5 + vec2(0.5);
-				
-				// Apply bias
-				float biased_ndc_z = (light_h.z - u_shadow_bias) / safe_w;
-				float current_depth = biased_ndc_z * 0.5 + 0.5;
+			vec4 light_h = u_light_viewprojection * vec4(v_world_position, 1.0);
+			float safe_w = max(light_h.w, 0.00001);
+			vec2 shadow_uv = (light_h.xy / safe_w) * 0.5 + vec2(0.5);
+			// Assignment 3.4.1: apply bias before dividing by W.
+			float biased_ndc_z = (light_h.z - u_shadow_bias) / safe_w;
+			float current_depth = biased_ndc_z * 0.5 + 0.5;
 
-				// Only test shadow if the fragment IS inside this light's frustum
-				if (light_h.w > 0.0 &&
-					shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 &&
-					shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 &&
-					current_depth >= 0.0 && current_depth <= 1.0)
-				{
-					// Remap UV from [0,1] to the tile in the atlas
-					vec2 atlas_uv = shadow_uv * atlas_rect.zw + atlas_rect.xy;
-					float stored_depth = texture(u_shadowmap, atlas_uv).r;
-					if (current_depth > stored_depth)
-						continue; // In shadow: skip this light's contribution
-				}
-				// If outside frustum: no shadow test, light contributes normally
+			if (light_h.w > 0.0 &&
+				shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 &&
+				shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 &&
+				current_depth >= 0.0 && current_depth <= 1.0)
+			{
+				float stored_depth = texture(u_shadowmap, shadow_uv).r;
+				if (current_depth > stored_depth)
+					continue;
 			}
 		}
 

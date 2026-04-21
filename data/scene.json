@@ -137,7 +137,7 @@
 			"max_dist":	140,
 			"cast_shadows":	true,
 			"near_dist":	0.5,
-			"area":	-98,
+			"area":	-11,
 			"light_type":	"DIRECTIONAL",
 			"type":	"LIGHT"
 		}, {
