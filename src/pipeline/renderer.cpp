@@ -30,14 +30,16 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	render_boundaries = false;
 	single_pass_mode = true;
 
-	// Shadow mapping defaults
+	// Shadow mapping defaults (3.5: multiple lights)
 	shadowmap_resolution = 1024;
-	shadow_light_index = 3;        // 3 = directional (moonlight) per assignment 3.2.1
-	shadow_bias = 0.0005f;         // 3.4.1
-	shadow_front_face_cull = true; // 3.4.2: enabled by default (slide recommendation)
-	shadowmap_fbo = nullptr;
-	shadow_camera = nullptr;
-	shadow_light = nullptr;
+	shadow_bias = 0.0005f;
+	shadow_front_face_cull = true;
+	num_shadow_lights = 0;
+	for (int i = 0; i < MAX_SHADOW_LIGHTS; i++) {
+		shadow_fbos[i] = nullptr;
+		shadow_cameras[i] = nullptr;
+		shadow_light_indices[i] = -1;
+	}
 
 	scene = nullptr;
 	skybox_cubemap = nullptr;
@@ -46,16 +48,21 @@ Renderer::Renderer(const char* shader_atlas_filename)
 		exit(1);
 	GFX::checkGLErrors();
 
-	shadowmap_fbo = new GFX::FBO();
-	if (!shadowmap_fbo->setDepthOnly(shadowmap_resolution, shadowmap_resolution))
-	{
-		delete shadowmap_fbo;
-		shadowmap_fbo = nullptr;
+	// Allocate MAX_SHADOW_LIGHTS FBOs and cameras
+	for (int i = 0; i < MAX_SHADOW_LIGHTS; i++) {
+		shadow_fbos[i] = new GFX::FBO();
+		if (!shadow_fbos[i]->setDepthOnly(shadowmap_resolution, shadowmap_resolution)) {
+			delete shadow_fbos[i];
+			shadow_fbos[i] = nullptr;
+		}
+		else if (shadow_fbos[i]->depth_texture) {
+			char name[64];
+			sprintf(name, "ShadowMap_%d", i);
+			shadow_fbos[i]->depth_texture->setName(name);
+		}
+		shadow_cameras[i] = new Camera();
 	}
-	else if (shadowmap_fbo->depth_texture) {
-		shadowmap_fbo->depth_texture->setName("ShadowMap_Depth");
-	}
-	shadow_camera = new Camera();
+	GFX::checkGLErrors(); // flush any GL errors from FBO creation
 
 	sphere.createSphere(1.0f);
 	sphere.uploadToVRAM();
@@ -63,105 +70,81 @@ Renderer::Renderer(const char* shader_atlas_filename)
 
 Renderer::~Renderer()
 {
-	if (shadowmap_fbo)
-	{
-		delete shadowmap_fbo;
-		shadowmap_fbo = nullptr;
-	}
-	if (shadow_camera)
-	{
-		delete shadow_camera;
-		shadow_camera = nullptr;
+	for (int i = 0; i < MAX_SHADOW_LIGHTS; i++) {
+		if (shadow_fbos[i]) { delete shadow_fbos[i]; shadow_fbos[i] = nullptr; }
+		if (shadow_cameras[i]) { delete shadow_cameras[i]; shadow_cameras[i] = nullptr; }
 	}
 }
 
-// Assignment 3.2.1: Configure the "light camera".
-// Build view + projection matrices for the light currently at shadow_light_index.
-// We follow the slides: lookAt with the light position+forward, then either
-// setPerspective (spotlight, FOV = cone_info.y*2) or setOrthographic (directional,
-// half_size = area/2) using the light's near_distance / max_distance.
-void Renderer::updateShadowCamera()
+// Assignment 3.5: Configure shadow cameras for ALL lights with cast_shadows.
+// Iterates light_list, for each SPOT or DIRECTIONAL light with cast_shadows==true,
+// configures the next available shadow camera slot (up to MAX_SHADOW_LIGHTS).
+void Renderer::updateShadowCameras()
 {
-	shadow_light = nullptr;
-	if (!shadow_camera)
-		return;
-	if (shadow_light_index < 0 || shadow_light_index >= (int)light_list.size())
-		return;
+	num_shadow_lights = 0;
 
-	LightEntity* light = light_list[shadow_light_index];
-	if (!light)
-		return;
-	if (light->light_type != SCN::eLightType::SPOT &&
-		light->light_type != SCN::eLightType::DIRECTIONAL)
-		return; // pointlights are skipped per the slides
-
-	// Check the cast_shadows property from the scene entity
-	if (!light->cast_shadows)
-		return;
-
-	shadow_light = light;
-
-	// Position & direction from the light entity's transform (like the slide).
-	// Important: in this framework Matrix44::frontVector() returns the local +Z
-	// axis of the transform, but the convention (same as cameras) is that the
-	// light shines towards local -Z. The slide uses:
-	//     lookAt(light_pos, light_mat * vec3(0,0,-1), up)
-	// which is exactly "light_pos - frontVector()" in world space.
-	Matrix44 light_model = light->root.model;
-	Vector3f light_pos = light_model.getTranslation();
-	Vector3f light_front = light_model.frontVector();
-	light_front.normalize();
-	Vector3f light_target = light_pos - light_front; // <-- the light shines towards -Z local
-	Vector3f up(0.0f, 1.0f, 0.0f);
-
-	shadow_camera->lookAt(light_pos, light_target, up);
-
-	// Safe near/far from the light entity
-	float near_p = light->near_distance > 0.01f ? light->near_distance : 0.01f;
-	float far_p = light->max_distance;
-	if (far_p < near_p + 0.01f)
-		far_p = near_p + 10.0f;
-
-	if (light->light_type == SCN::eLightType::SPOT)
+	for (int i = 0; i < (int)light_list.size() && num_shadow_lights < MAX_SHADOW_LIGHTS; i++)
 	{
-		// cone_info.y is the HALF cone angle in degrees -> full cone FOV
-		float fov_deg = light->cone_info.y * 2.0f;
-		if (fov_deg < 1.0f)
-			fov_deg = 1.0f;
-		float aspect = 1.0f; // shadow FBO is square
-		shadow_camera->setPerspective(fov_deg, aspect, near_p, far_p);
-	}
-	else // DIRECTIONAL
-	{
-		// half_size = area / 2, using fabs to be robust against negative area
-		// values stored in the scene JSON.
-		float half_size = std::fabs(light->area) * 0.5f;
-		if (half_size < 0.1f)
-			half_size = 10.0f;
-		shadow_camera->setOrthographic(-half_size, half_size,
-			-half_size, half_size,
-			near_p, far_p);
+		LightEntity* light = light_list[i];
+		if (!light) continue;
+		if (!light->cast_shadows) continue;
+		if (light->light_type != SCN::eLightType::SPOT &&
+			light->light_type != SCN::eLightType::DIRECTIONAL)
+			continue;
+
+		int slot = num_shadow_lights;
+		shadow_light_indices[slot] = i;
+		Camera* cam = shadow_cameras[slot];
+		if (!cam) continue;
+
+		// View matrix: position + direction from the light's transform
+		Matrix44 light_model = light->root.model;
+		Vector3f light_pos = light_model.getTranslation();
+		Vector3f light_front = light_model.frontVector();
+		light_front.normalize();
+		Vector3f light_target = light_pos - light_front; // light shines towards -Z local
+		Vector3f up(0.0f, 1.0f, 0.0f);
+		cam->lookAt(light_pos, light_target, up);
+
+		// Projection matrix: perspective for spotlights, orthographic for directional
+		float near_p = light->near_distance > 0.01f ? light->near_distance : 0.01f;
+		float far_p = light->max_distance;
+		if (far_p < near_p + 0.01f)
+			far_p = near_p + 10.0f;
+
+		if (light->light_type == SCN::eLightType::SPOT)
+		{
+			float fov_deg = light->cone_info.y * 2.0f;
+			if (fov_deg < 1.0f) fov_deg = 1.0f;
+			cam->setPerspective(fov_deg, 1.0f, near_p, far_p);
+		}
+		else // DIRECTIONAL
+		{
+			float half_size = std::fabs(light->area) * 0.5f;
+			if (half_size < 0.1f) half_size = 10.0f;
+			cam->setOrthographic(-half_size, half_size,
+				-half_size, half_size,
+				near_p, far_p);
+		}
+
+		num_shadow_lights++;
 	}
 }
 
-// Assignment 3.2.2: Render the scene to the shadow map.
-// Follow the slides exactly:
-//   1) bind the FBO
-//   2) disable color writes
-//   3) clear depth buffer
-//   4) enable light camera, iterate renderables with a cheap "flat" shader
-//      (skipping BLEND materials, keeping opaque + MASK alpha-cutoff)
-//   5) unbind FBO and restore the previous GL state
-void Renderer::renderShadowMap()
+// Assignment 3.5: Render shadow maps for ALL active shadow-casting lights.
+// For each shadow slot, bind its FBO, render the scene from its light camera
+// with the flat shader, then unbind. State is saved/restored once around
+// the entire loop.
+void Renderer::renderShadowMaps()
 {
-	if (!shadowmap_fbo || !shadow_camera || !shadow_light)
+	if (num_shadow_lights == 0)
 		return;
 
 	GFX::Shader* shader = GFX::Shader::Get("flat");
 	if (!shader)
 		return;
 
-	// --- Save the state we are about to touch, to restore it at the end ---
+	// --- Save state once for all shadow passes ---
 	GLint prev_viewport[4];
 	glGetIntegerv(GL_VIEWPORT, prev_viewport);
 	Camera* prev_camera = Camera::current;
@@ -169,56 +152,56 @@ void Renderer::renderShadowMap()
 	GLint prev_front_face = GL_CCW;
 	glGetIntegerv(GL_FRONT_FACE, &prev_front_face);
 
-	// --- 1) Bind FBO + configure render target ---
-	shadowmap_fbo->bind();
-	glViewport(0, 0, shadowmap_resolution, shadowmap_resolution);
-
-	// --- 2) disable color writes, only depth matters ---
+	// Common GL state for shadow rendering
 	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-
-	// --- 3) clean previous frame's depth ---
 	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE); // ensure depth writes are enabled
 	glDisable(GL_BLEND);
-	glClear(GL_DEPTH_BUFFER_BIT);
 
-	// --- 3.4.2: Front Face Culling ---
-	// Enable culling and flip the front-face winding so that back faces are
-	// the ones being rendered. This adds a self-adjusting bias and hides
-	// the acne on the geometry that is actually lit by the shadow-casting
-	// light. The state is restored below once the shadow map is finished.
 	if (shadow_front_face_cull)
 	{
 		glEnable(GL_CULL_FACE);
 		glFrontFace(GL_CW);
 	}
 
-	// --- 4) render the scene from the light camera with the flat shader ---
-	shadow_camera->enable();
 	shader->enable();
 
-	for (const sRenderable& r : render_list)
+	// --- Render each shadow map ---
+	for (int s = 0; s < num_shadow_lights; s++)
 	{
-		if (!r.mesh || !r.material)
-			continue;
+		GFX::FBO* fbo = shadow_fbos[s];
+		Camera* cam = shadow_cameras[s];
+		if (!fbo || !cam) continue;
 
-		// Only opaque + alpha-cutoff (MASK). BLEND is skipped because the
-		// depth buffer does not work with transparency.
-		if (r.material->alpha_mode == SCN::eAlphaMode::BLEND)
-			continue;
+		// Ensure depth writes are on before each pass (material->bind may have changed it)
+		glDepthMask(GL_TRUE);
+		GFX::checkGLErrors(); // flush any residual errors before FBO::bind() assert
 
-		// Bind material so flat.fs can optionally discard by alpha cutoff
-		// (needed for tree leaves / signs).
-		r.material->bind(shader);
-		shader->setUniform("u_model", r.matrix);
-		shader->setUniform("u_viewprojection", shadow_camera->viewprojection_matrix);
+		fbo->bind();
+		glViewport(0, 0, shadowmap_resolution, shadowmap_resolution);
+		glClear(GL_DEPTH_BUFFER_BIT);
 
-		r.mesh->render(GL_TRIANGLES);
+		cam->enable();
+
+		for (const sRenderable& r : render_list)
+		{
+			if (!r.mesh || !r.material)
+				continue;
+			if (r.material->alpha_mode == SCN::eAlphaMode::BLEND)
+				continue;
+
+			r.material->bind(shader);
+			shader->setUniform("u_model", r.matrix);
+			shader->setUniform("u_viewprojection", cam->viewprojection_matrix);
+			r.mesh->render(GL_TRIANGLES);
+		}
+
+		fbo->unbind();
 	}
 
 	shader->disable();
 
-	// --- 5) unbind and restore everything (including 3.4.2 cull state) ---
-	shadowmap_fbo->unbind();
+	// --- Restore all state ---
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glFrontFace(prev_front_face);
 	if (prev_cull_enabled)
@@ -270,9 +253,6 @@ void Renderer::parseNode(SCN::Node* node) {
 }
 
 void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
-	// HERE =====================
-	// TODO: GENERATE RENDERABLES
-	// ==========================
 	render_list.clear();
 	light_list.clear();
 
@@ -332,8 +312,8 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	setupScene();
 
 	parseSceneEntities(scene, camera);
-	updateShadowCamera();
-	renderShadowMap();
+	updateShadowCameras();
+	renderShadowMaps();
 
 	//set the clear color (the background color)
 	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
@@ -492,17 +472,36 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		}
 	}
 
-	//assignment 3.3 send shadow map and light camera (only used when 3.2 is working)
+	//assignment 3.5: send all shadow maps and their VP matrices
 	if (single_pass_mode)
 	{
-		bool shadow_enabled = shadowmap_fbo && shadowmap_fbo->depth_texture && shadow_camera && shadow_light;
-		shader->setUniform("u_shadow_enabled", shadow_enabled ? 1 : 0);
-		shader->setUniform("u_shadow_light_index", shadow_enabled ? shadow_light_index : -1);
-		if (shadow_enabled)
+		shader->setUniform("u_num_shadow_lights", num_shadow_lights);
+		shader->setUniform("u_shadow_bias", shadow_bias);
+
+		if (num_shadow_lights > 0)
 		{
-			shader->setUniform("u_shadowmap", shadowmap_fbo->depth_texture, 7);
-			shader->setUniform("u_light_viewprojection", shadow_camera->viewprojection_matrix);
-			shader->setUniform("u_shadow_bias", shadow_bias);
+			// Build arrays for batch upload (avoids [0] indexing issues on macOS Metal)
+			Matrix44 shadow_vp_array[MAX_SHADOW_LIGHTS];
+			int shadow_idx_array[MAX_SHADOW_LIGHTS];
+			for (int s = 0; s < MAX_SHADOW_LIGHTS; s++) {
+				if (s < num_shadow_lights && shadow_cameras[s])
+					shadow_vp_array[s] = shadow_cameras[s]->viewprojection_matrix;
+				else
+					shadow_vp_array[s].setIdentity();
+				shadow_idx_array[s] = (s < num_shadow_lights) ? shadow_light_indices[s] : -1;
+			}
+
+			// Upload VP matrices and indices as arrays (base name, portable)
+			shader->setMatrix44Array("u_shadow_vps", shadow_vp_array, num_shadow_lights);
+			shader->setUniform1Array("u_shadow_indices", shadow_idx_array, num_shadow_lights);
+
+			// Textures must be bound individually (samplers can't use array upload)
+			// Names match the shader's: uniform sampler2D u_shadow_maps[MAX_SHADOW_LIGHTS];
+			static const char* sm_names[] = { "u_shadow_maps[0]", "u_shadow_maps[1]", "u_shadow_maps[2]", "u_shadow_maps[3]" };
+			for (int s = 0; s < num_shadow_lights; s++) {
+				if (shadow_fbos[s] && shadow_fbos[s]->depth_texture)
+					shader->setUniform(sm_names[s], shadow_fbos[s]->depth_texture, 7 + s);
+			}
 		}
 	}
 
@@ -535,9 +534,17 @@ void Renderer::showUI()
 	ImGui::Checkbox("Single Pass Mode", &single_pass_mode);
 
 	ImGui::Separator();
-	ImGui::Text("Shadow mapping (3.2 / 3.3 / 3.4)");
-	ImGui::DragInt("Shadow Light Index", &shadow_light_index, 1.0f, 0, 15);
-	ImGui::Text("Casting light: %s", shadow_light ? "valid" : "none");
+	ImGui::Text("Shadow mapping (3.2 - 3.5)");
+	ImGui::Text("Active shadow lights: %d / %d", num_shadow_lights, MAX_SHADOW_LIGHTS);
+	for (int s = 0; s < num_shadow_lights; s++) {
+		int li = shadow_light_indices[s];
+		const char* type_str = "?";
+		if (li >= 0 && li < (int)light_list.size()) {
+			if (light_list[li]->light_type == SCN::eLightType::SPOT) type_str = "SPOT";
+			else if (light_list[li]->light_type == SCN::eLightType::DIRECTIONAL) type_str = "DIR";
+		}
+		ImGui::Text("  Slot %d: light[%d] (%s)", s, li, type_str);
+	}
 	ImGui::DragFloat("Shadow Bias (3.4.1)", &shadow_bias, 0.0001f, 0.0f, 0.05f, "%.5f");
 	ImGui::Checkbox("Front Face Culling (3.4.2)", &shadow_front_face_cull);
 

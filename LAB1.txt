@@ -31,9 +31,11 @@ Exercises Completed:
 - 3.2: Render to the shadow map. Implemented the "light camera" logic with both perspective (spotlight) and orthogonal (directional) projections.
 - 3.3: Apply shadow maps. Implemented shadow coordinate projection and depth comparison in the shader.
 - 3.4: Shadow map error mitigation techniques. Added Shadow Bias to prevent shadow acne and Front-Face Culling during the shadow pass.
+- 3.5.3 ImGUI controls.
 
 Exercises Not Completed:
--3.5:
+- 3.5 Extend to support multiple lights, and multiple types of lights.
+
 
 Extra Exercises Explanation:
 

@@ -33,14 +33,15 @@ namespace SCN {
 		bool render_boundaries;
 		bool single_pass_mode;
 
-		// Shadow mapping (assignment 3.2 / 3.3 / 3.4)
-		int shadowmap_resolution;      // resolution of the depth FBO (e.g. 1024)
-		int shadow_light_index;        // which index in light_list casts shadows (0=spot, 3=directional by default)
-		float shadow_bias;             // 3.4.1: constant depth offset to avoid shadow acne
-		bool shadow_front_face_cull;   // 3.4.2: render only back-faces to the shadow map (FFC)
-		GFX::FBO* shadowmap_fbo;       // depth-only FBO
-		Camera* shadow_camera;         // "light camera" used to render the shadow map
-		SCN::LightEntity* shadow_light;// the light currently casting shadows (nullptr if disabled)
+		// Shadow mapping (assignment 3.2 - 3.5: multiple shadow-casting lights)
+		static const int MAX_SHADOW_LIGHTS = 4;
+		int shadowmap_resolution;                          // resolution of each depth FBO
+		float shadow_bias;                                 // 3.4.1: depth offset to avoid shadow acne
+		bool shadow_front_face_cull;                        // 3.4.2: render back-faces only to shadow map
+		int num_shadow_lights;                             // active shadow maps this frame
+		GFX::FBO* shadow_fbos[MAX_SHADOW_LIGHTS];           // depth-only FBOs (one per shadow light)
+		Camera* shadow_cameras[MAX_SHADOW_LIGHTS];          // light cameras
+		int shadow_light_indices[MAX_SHADOW_LIGHTS];        // shadow slot i → light_list index
 		std::vector <sRenderable> render_list; //donde guardamos todos los objetos a renderizar
 		std::vector<SCN::LightEntity*> light_list; //Donde guardamos todas nuestras luces
 		GFX::Texture* skybox_cubemap;
@@ -56,8 +57,8 @@ namespace SCN {
 
 		//add here your functions
 		//...
-		void updateShadowCamera();
-		void renderShadowMap();
+		void updateShadowCameras();
+		void renderShadowMaps();
 		void parseNode(SCN::Node* node);
 
 		void parseSceneEntities(SCN::Scene* scene, Camera* camera);
