@@ -1,6 +1,30 @@
 Names and NIAs:
 - Jorge Camacho (NIA: 266986)
-- Ivan Torres (NIA: )
+- Ivan Torres (NIA: 286568)
+ASSIGNMENT 1
+Exercises Completed:
+- 3.1 Generate a Render Call struct
+- 3.2 Parsing the scene in order to generate Render Calls
+- 3.3 Rendering the scene 
+- 3.4 Ordering Render Calls
+
+Extra Exercises Explanation:
+- 3.5 EXTRA: Frustum culling
+
+Exercises Not Completed:
+
+ASSIGNMENT 2
+Exercises Completed:
+- 3.1 Generate the FBO.
+- 3.2 Render to the shadow map.
+- 3.3 Apply shadow maps
+- 3.5.3 ImGUI
+
+Exercises Not Completed:
+3.5 Extend to support multiple lights, and multiple types of lights.
+
+
+ASSIGNMENT 3
 
 Exercises Completed:
 - 3.1: Generate the FBO.
@@ -9,6 +33,7 @@ Exercises Completed:
 - 3.4: Shadow map error mitigation techniques. Added Shadow Bias to prevent shadow acne and Front-Face Culling during the shadow pass.
 
 Exercises Not Completed:
+-3.5:
 
 Extra Exercises Explanation:
 
