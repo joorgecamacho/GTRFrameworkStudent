@@ -1,10 +1,10 @@
 //example of some shaders compiled
 flat basic.vs flat.fs
 texture basic.vs texture.fs
+phong basic.vs phong.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
 multi basic.vs multi.fs
-
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -34,6 +34,139 @@ vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
 	mat3 TBN = cotangent_frame(N, WP, uv);
 	return normalize(TBN * normal_pixel);
 }
+
+\phong.fs
+
+#version 330 core
+
+#include "perturbNormal"
+
+// Varyings: datos que llegan del vertex shader (basic.vs)
+in vec3 v_position;
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+in vec4 v_color;
+
+// Uniforms del material (los mismos que texture.fs)
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_time;
+uniform float u_alpha_cutoff;
+
+// Uniforms de iluminación (nuevos)
+uniform vec3 u_ambient_light;     // luz ambiental de la escena
+uniform vec3 u_camera_position;   // posición de la cámara (para specular)
+uniform float u_shininess;        // alpha/shininess del material
+
+const int MAX_LIGHTS = 8;
+uniform vec3 u_light_position[MAX_LIGHTS];
+uniform vec3 u_light_colors[MAX_LIGHTS];
+uniform int u_light_types[MAX_LIGHTS];       // 1=POINT, 2=SPOT, 3=DIRECTIONAL
+uniform vec3 u_light_directions[MAX_LIGHTS]; // dirección frontal de la luz
+uniform vec2 u_light_cone_info[MAX_LIGHTS];  // x=alpha_min, y=alpha_max (en radianes)
+uniform int u_num_lights;
+
+uniform sampler2D u_normal_texture;
+uniform int u_has_normal_texture;
+uniform int u_show_normals;
+
+out vec4 FragColor;
+
+void main()
+{
+	// 1. Color base = material color * textura
+	vec2 uv = v_uv;
+	vec4 color = u_color;
+	color *= texture(u_texture, uv);
+
+	if(color.a < u_alpha_cutoff)
+		discard;
+
+	vec3 base_color = color.rgb;
+
+	// 2. Normal Mapping
+	vec3 N = normalize(v_normal);
+	// Si u_show_normals == 1 aplicamos el Normal Map, si es 0 usamos la normal geométrica plana
+	if (u_has_normal_texture == 1 && u_show_normals == 1) {
+		// Leer textura de normales [0, 1]
+		vec3 normal_pixel = texture(u_normal_texture, uv).xyz;
+		// Mapear de [0, 1] a [-1, 1]
+		normal_pixel = normal_pixel * 2.0 - 1.0;
+		
+		N = perturbNormal(N, v_world_position, uv, normal_pixel);
+	}
+
+	vec3 V = normalize(u_camera_position - v_world_position);
+
+	vec3 out_color = vec3(0.0);
+
+	// Ambient: una sola vez
+	out_color += u_ambient_light * base_color;
+
+	// Iterar luces
+	for (int i = 0; i < MAX_LIGHTS; i++) {
+		if (i < u_num_lights) {
+
+			vec3 L;
+			float attenuation;
+
+			if (u_light_types[i] == 1) {
+				// === POINT LIGHT ===
+				L = normalize(u_light_position[i] - v_world_position);
+				float dist = length(u_light_position[i] - v_world_position);
+				attenuation = 1.0 / (dist * dist);
+			}
+			else if (u_light_types[i] == 3) {
+				// === DIRECTIONAL LIGHT ===
+				// L es la dirección de la luz (invertida: queremos hacia la luz)
+				L = normalize(-u_light_directions[i]);
+				// Sin atenuación (el sol no se atenúa)
+				attenuation = 1.0;
+			}
+			else if (u_light_types[i] == 2) {
+				// === SPOT LIGHT ===
+				L = normalize(u_light_position[i] - v_world_position);
+				float dist = length(u_light_position[i] - v_world_position);
+				attenuation = 1.0 / (dist * dist);
+
+				// Atenuación del cono
+				vec3 D = normalize(u_light_directions[i]);
+				float cos_angle = dot(-L, D);  // ángulo entre el rayo y la dirección del foco
+				float cos_alpha_max = cos(u_light_cone_info[i].y);
+				float cos_alpha_min = cos(u_light_cone_info[i].x);
+
+				// Si estamos fuera del cono exterior, no hay luz
+				if (cos_angle < cos_alpha_max) {
+					attenuation = 0.0;
+				} else {
+					// Interpolación suave entre cono interior y exterior
+					float spot_factor = clamp(
+						(cos_angle - cos_alpha_max) / (cos_alpha_min - cos_alpha_max),
+						0.0, 1.0
+					);
+					attenuation *= spot_factor;
+				}
+			}
+
+			vec3 light_intensity = u_light_colors[i] * attenuation;
+
+			// Diffuse
+			float NdotL = clamp(dot(N, L), 0.0, 1.0);
+			out_color += base_color * NdotL * light_intensity;
+
+			// Specular
+			vec3 R = reflect(-L, N);
+			float RdotV = clamp(dot(R, V), 0.0, 1.0);
+			out_color += base_color * pow(RdotV, u_shininess) * light_intensity;
+		}
+	}
+
+	// Output final
+	FragColor = vec4(out_color, color.a);
+}
+
+
 
 \basic.vs
 

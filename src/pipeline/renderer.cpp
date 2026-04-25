@@ -15,6 +15,7 @@
 #include "../extra/hdre.h"
 #include "../core/ui.h"
 
+#include "light.h"
 #include "scene.h"
 
 
@@ -76,6 +77,7 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	// TODO: GENERATE RENDERABLES
 	// ==========================
 	render_list.clear();
+	light_list.clear();
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
 
@@ -88,13 +90,11 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 			//Empezamos la magia pasándole la raíz y la cámara
 			parseNode(&prefabEntity->root); 
 		}
-
-		// Store Prefab Entitys
-		// ...
-		//		Store Children Prefab Entities
-
-		// Store Lights
-		// ...
+		if(entity->getType() == SCN::eEntityType::LIGHT){
+			// Cast a LightEntity para acceder a light_type, intensity, color, etc.
+			LightEntity* light = (LightEntity*)entity;
+			light_list.push_back(light);
+		}
 	}
 
 	// Tarea 3.4: Ordenar Render Calls
@@ -198,7 +198,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	glEnable(GL_DEPTH_TEST);
 
 	//chose a shader
-	shader = GFX::Shader::Get("texture");
+	shader = GFX::Shader::Get("phong");
 
     assert(glGetError() == GL_NO_ERROR);
 
@@ -207,7 +207,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		return;
 	shader->enable();
 
-	material->bind(shader);
+	material->sabind(shader);
 
 	//upload uniforms
 	shader->setUniform("u_model", model);
@@ -219,13 +219,106 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	// Upload time, for cool shader effects
 	float t = getTime();
 	shader->setUniform("u_time", t );
+	shader->setUniform("u_ambient_light",this->scene->ambient_light);
+
+	const int MAX_LIGHTS = 8;
+	Vector3f light_positions[MAX_LIGHTS];
+	Vector3f light_colors[MAX_LIGHTS];
+	Vector3f light_directions[MAX_LIGHTS];
+	int light_types[MAX_LIGHTS];
+	Vector2f light_cone_info[MAX_LIGHTS];
+
+	int num_lights = std::min((int)light_list.size(), MAX_LIGHTS);
+	
+	for (int i = 0; i < num_lights; i++) {
+		light_positions[i] = light_list[i]->root.model.getTranslation();
+		light_colors[i] = light_list[i]->color * light_list[i]->intensity;
+		light_types[i] = light_list[i]->light_type;
+		light_directions[i] = light_list[i]->root.model.frontVector();
+		// Convertir ángulos del cono de grados a radianes
+		light_cone_info[i] = Vector2f(
+			light_list[i]->cone_info.x * DEG2RAD,
+			light_list[i]->cone_info.y * DEG2RAD
+		);
+	}
+
+	shader->setUniform1("u_show_normals", show_normals ? 1 : 0);
 
 	// Render just the verticies as a wireframe
 	if (render_wireframe)
 		glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
-	//do the draw call that renders the mesh into the screen
-	mesh->render(GL_TRIANGLES);
+	if (single_pass) {
+		// ================= SINGLE PASS =================
+		shader->setUniform3("u_ambient_light", this->scene->ambient_light);
+		if (material->alpha_mode == SCN::eAlphaMode::BLEND) {
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		} else {
+			glDisable(GL_BLEND);
+		}
+
+		shader->setUniform3Array("u_light_position", (float*)&light_positions[0], num_lights);
+		shader->setUniform3Array("u_light_colors", (float*)&light_colors[0], num_lights);
+		shader->setUniform1("u_num_lights", num_lights);
+		shader->setUniform1Array("u_light_types", (int*)&light_types[0], num_lights);
+		shader->setUniform3Array("u_light_directions", (float*)&light_directions[0], num_lights);
+		shader->setUniform2Array("u_light_cone_info", (float*)&light_cone_info[0], num_lights);
+		
+		mesh->render(GL_TRIANGLES);
+	} else {
+		// ================= MULTI PASS =================
+		if (num_lights == 0) {
+			// Render without lights (only ambient)
+			shader->setUniform1("u_num_lights", 0);
+			shader->setUniform3("u_ambient_light", this->scene->ambient_light);
+			if (material->alpha_mode == SCN::eAlphaMode::BLEND) {
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			} else {
+				glDisable(GL_BLEND);
+			}
+			mesh->render(GL_TRIANGLES);
+		} else {
+			for (int i = 0; i < num_lights; i++) {
+				if (i == 0) {
+					// First pass: Base color + Ambient + First Light
+					shader->setUniform3("u_ambient_light", this->scene->ambient_light);
+					if (material->alpha_mode == SCN::eAlphaMode::BLEND) {
+						glEnable(GL_BLEND);
+						glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+					} else {
+						glDisable(GL_BLEND);
+					}
+					glDepthFunc(GL_LESS);
+				} else {
+					// Successive passes: Additive blending + No ambient
+					shader->setUniform3("u_ambient_light", vec3(0.0));
+					glEnable(GL_BLEND);
+					if (material->alpha_mode == SCN::eAlphaMode::BLEND) {
+						glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive respecting alpha
+					} else {
+						glBlendFunc(GL_ONE, GL_ONE); // Pure additive
+					}
+					glDepthFunc(GL_LEQUAL); // Render over the exact same depth
+				}
+
+				// Only send the current light data (num_lights = 1)
+				shader->setUniform3Array("u_light_position", (float*)&light_positions[i], 1);
+				shader->setUniform3Array("u_light_colors", (float*)&light_colors[i], 1);
+				shader->setUniform1("u_num_lights", 1);
+				shader->setUniform1Array("u_light_types", (int*)&light_types[i], 1);
+				shader->setUniform3Array("u_light_directions", (float*)&light_directions[i], 1);
+				shader->setUniform2Array("u_light_cone_info", (float*)&light_cone_info[i], 1);
+				
+				mesh->render(GL_TRIANGLES);
+			}
+			
+			// Reset OpenGL state after multi-pass
+			glDisable(GL_BLEND);
+			glDepthFunc(GL_LESS);
+		}
+	}
 
 	//disable shader
 	shader->disable();
@@ -242,6 +335,8 @@ void Renderer::showUI()
 		
 	ImGui::Checkbox("Wireframe", &render_wireframe);
 	ImGui::Checkbox("Boundaries", &render_boundaries);
+	ImGui::Checkbox("Enable Normal Maps", &show_normals);
+	ImGui::Checkbox("Single Pass", &single_pass);
 
 	//add here your stuff
 	//...

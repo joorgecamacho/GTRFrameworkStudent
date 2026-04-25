@@ -31,7 +31,10 @@ namespace SCN {
 	public:
 		bool render_wireframe;
 		bool render_boundaries;
+		bool show_normals = true; // Nueva variable para el modo debug de normales
+		bool single_pass = true; // Toggle para Single/Multi pass
     std::vector <sRenderable> render_list;
+	std::vector<LightEntity*> light_list;
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;

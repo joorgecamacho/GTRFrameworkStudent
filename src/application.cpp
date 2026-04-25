@@ -138,6 +138,7 @@ void Application::onKeyDown( SDL_KeyboardEvent event )
 	{
 		case SDLK_ESCAPE: must_exit = true; break; //ESC key, kill the app
 		case SDLK_TAB: render_ui = !render_ui; break;
+		case SDLK_N: renderer->show_normals = !renderer->show_normals; break; // Toggle Normal Map Debug
 		case SDLK_F5: GFX::Shader::ReloadAll(); break;
 		case SDLK_F6: //refresh
 			scene->clear();
