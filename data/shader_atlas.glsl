@@ -73,6 +73,59 @@ uniform int u_show_normals;
 
 out vec4 FragColor;
 
+// --- FUNCIÓN DE CÁLCULO DE LUZ INDIVIDUAL ---
+vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
+    vec3 L;
+    float attenuation;
+
+    if (u_light_types[index] == 1) {
+        // === POINT LIGHT ===
+        L = normalize(u_light_position[index] - world_pos);
+        float dist = length(u_light_position[index] - world_pos);
+        attenuation = 1.0 / (dist * dist);
+    }
+    else if (u_light_types[index] == 3) {
+        // === DIRECTIONAL LIGHT ===
+        L = normalize(-u_light_directions[index]);
+        attenuation = 1.0;
+    }
+    else if (u_light_types[index] == 2) {
+        // === SPOT LIGHT ===
+        L = normalize(u_light_position[index] - world_pos);
+        float dist = length(u_light_position[index] - world_pos);
+        attenuation = 1.0 / (dist * dist);
+
+        vec3 D = normalize(u_light_directions[index]);
+        float cos_angle = dot(-L, D);
+        float cos_alpha_max = cos(u_light_cone_info[index].y);
+        float cos_alpha_min = cos(u_light_cone_info[index].x);
+
+        if (cos_angle < cos_alpha_max) {
+            attenuation = 0.0;
+        } else {
+            float spot_factor = clamp(
+                (cos_angle - cos_alpha_max) / (cos_alpha_min - cos_alpha_max),
+                0.0, 1.0
+            );
+            attenuation *= spot_factor;
+        }
+    }
+
+    vec3 light_intensity = u_light_colors[index] * attenuation;
+    vec3 result_color = vec3(0.0);
+
+    // Diffuse
+    float NdotL = clamp(dot(N, L), 0.0, 1.0);
+    result_color += base_color * NdotL * light_intensity;
+
+    // Specular
+    vec3 R = reflect(-L, N);
+    float RdotV = clamp(dot(R, V), 0.0, 1.0);
+    result_color += base_color * pow(RdotV, u_shininess) * light_intensity;
+
+    return result_color;
+}
+
 void main()
 {
 	// 1. Color base = material color * textura
@@ -107,58 +160,7 @@ void main()
 	// Iterar luces
 	for (int i = 0; i < MAX_LIGHTS; i++) {
 		if (i < u_num_lights) {
-
-			vec3 L;
-			float attenuation;
-
-			if (u_light_types[i] == 1) {
-				// === POINT LIGHT ===
-				L = normalize(u_light_position[i] - v_world_position);
-				float dist = length(u_light_position[i] - v_world_position);
-				attenuation = 1.0 / (dist * dist);
-			}
-			else if (u_light_types[i] == 3) {
-				// === DIRECTIONAL LIGHT ===
-				// L es la dirección de la luz (invertida: queremos hacia la luz)
-				L = normalize(-u_light_directions[i]);
-				// Sin atenuación (el sol no se atenúa)
-				attenuation = 1.0;
-			}
-			else if (u_light_types[i] == 2) {
-				// === SPOT LIGHT ===
-				L = normalize(u_light_position[i] - v_world_position);
-				float dist = length(u_light_position[i] - v_world_position);
-				attenuation = 1.0 / (dist * dist);
-
-				// Atenuación del cono
-				vec3 D = normalize(u_light_directions[i]);
-				float cos_angle = dot(-L, D);  // ángulo entre el rayo y la dirección del foco
-				float cos_alpha_max = cos(u_light_cone_info[i].y);
-				float cos_alpha_min = cos(u_light_cone_info[i].x);
-
-				// Si estamos fuera del cono exterior, no hay luz
-				if (cos_angle < cos_alpha_max) {
-					attenuation = 0.0;
-				} else {
-					// Interpolación suave entre cono interior y exterior
-					float spot_factor = clamp(
-						(cos_angle - cos_alpha_max) / (cos_alpha_min - cos_alpha_max),
-						0.0, 1.0
-					);
-					attenuation *= spot_factor;
-				}
-			}
-
-			vec3 light_intensity = u_light_colors[i] * attenuation;
-
-			// Diffuse
-			float NdotL = clamp(dot(N, L), 0.0, 1.0);
-			out_color += base_color * NdotL * light_intensity;
-
-			// Specular
-			vec3 R = reflect(-L, N);
-			float RdotV = clamp(dot(R, V), 0.0, 1.0);
-			out_color += base_color * pow(RdotV, u_shininess) * light_intensity;
+			out_color += computeLight(i, v_world_position, N, V, base_color);
 		}
 	}
 
