@@ -66,6 +66,9 @@ uniform int u_light_types[MAX_LIGHTS];       // 1=POINT, 2=SPOT, 3=DIRECTIONAL
 uniform vec3 u_light_directions[MAX_LIGHTS]; // dirección frontal de la luz
 uniform vec2 u_light_cone_info[MAX_LIGHTS];  // x=alpha_min, y=alpha_max (en radianes)
 uniform int u_num_lights;
+uniform sampler2D u_shadow_map; // La textura de profundidad que creamos
+uniform mat4 u_shadow_vp;       // La matriz View-Projection de nuestra cámara de luz
+
 
 uniform sampler2D u_normal_texture;
 uniform int u_has_normal_texture;

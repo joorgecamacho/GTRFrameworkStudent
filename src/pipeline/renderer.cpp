@@ -31,6 +31,12 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	scene = nullptr;
 	skybox_cubemap = nullptr;
 
+	if (shadow_fbo == nullptr) {
+		shadow_fbo = new GFX::FBO();
+		shadow_fbo->setDepthOnly(1024, 1024); 
+	}
+ 
+
 	if (!GFX::Shader::LoadAtlas(shader_atlas_filename))
 		exit(1);
 	GFX::checkGLErrors();
@@ -123,6 +129,9 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 
 	parseSceneEntities(scene, camera);
 
+	// TAREA 3.2: Generar el Shadow Map de la luz antes de dibujar la escena final
+	generateShadowMap();
+
 	//set the clear color (the background color)
 	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
 
@@ -207,7 +216,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		return;
 	shader->enable();
 
-	material->sabind(shader);
+	material->bind(shader);
 
 	//upload uniforms
 	shader->setUniform("u_model", model);
@@ -221,7 +230,6 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->setUniform("u_time", t );
 	shader->setUniform("u_ambient_light",this->scene->ambient_light);
 
-	const int MAX_LIGHTS = 8;
 	Vector3f light_positions[MAX_LIGHTS];
 	Vector3f light_colors[MAX_LIGHTS];
 	Vector3f light_directions[MAX_LIGHTS];
@@ -326,6 +334,60 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	//set the render state as it was before to avoid problems with future renders
 	glDisable(GL_BLEND);
 	glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+}
+
+void Renderer::generateShadowMap() {
+	if (light_list.empty() || shadow_fbo == nullptr) return;
+
+	// Por ahora (Paso 2), nos quedamos solo con la primera luz para entender el flujo
+	LightEntity* light_ent = light_list[0];
+
+	// 1. OBTENER POSICIÓN Y DIRECCIÓN DE LA LUZ
+	mat4 light_model = light_ent->root.getGlobalMatrix();
+	vec3 light_pos = light_model.getTranslation();
+	vec3 light_target = light_model * vec3(0.0f, 0.0f, -1.0f); // Un punto al frente de la luz
+
+	// 2. CREAR Y POSICIONAR LA CÁMARA
+	Camera light_cam;
+	light_cam.lookAt(light_pos, light_target, vec3(0.0f, 1.0f, 0.0f));
+
+	// 3. CONFIGURAR LA PROYECCIÓN
+	if (light_ent->light_type == eLightType::SPOT) {
+		// Asumimos aspect ratio 1.0 (cuadrado)
+		light_cam.setPerspective(light_ent->cone_info.y * RAD2DEG * 2.0f, 1.0f, light_ent->near_distance, light_ent->max_distance);
+	} else if (light_ent->light_type == eLightType::DIRECTIONAL) {
+		float half_size = light_ent->area / 2.0f;
+		light_cam.setOrthographic(-half_size, half_size, -half_size, half_size, light_ent->near_distance, light_ent->max_distance);
+	}
+
+	// 4. RENDER TO TEXTURE (FBO)
+	shadow_fbo->bind();
+
+	// Optimización: Desactivamos la escritura de color, solo nos importa el Z-Buffer
+	glColorMask(false, false, false, false);
+	glClear(GL_DEPTH_BUFFER_BIT);
+
+	// Usamos un shader ultra-simple para no calcular iluminación
+	GFX::Shader* flat_shader = GFX::Shader::Get("flat");
+	if (flat_shader) {
+		flat_shader->enable();
+		flat_shader->setUniform("u_viewprojection", light_cam.viewprojection_matrix);
+
+		for (int i = 0; i < render_list.size(); ++i) {
+			sRenderable& render_call = render_list[i];
+			
+			// En las sombras no solemos dibujar objetos transparentes de cristal
+			if (render_call.material->alpha_mode == SCN::eAlphaMode::BLEND) continue;
+
+			flat_shader->setUniform("u_model", render_call.matrix);
+			render_call.mesh->render(GL_TRIANGLES);
+		}
+		flat_shader->disable();
+	}
+
+	// Restauramos el estado de OpenGL
+	glColorMask(true, true, true, true);
+	shadow_fbo->unbind();
 }
 
 #ifndef SKIP_IMGUI

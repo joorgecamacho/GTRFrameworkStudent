@@ -29,12 +29,16 @@ namespace SCN {
 	class Renderer
 	{
 	public:
+		const int MAX_LIGHTS = 8;
+
 		bool render_wireframe;
 		bool render_boundaries;
 		bool show_normals = true; // Nueva variable para el modo debug de normales
 		bool single_pass = true; // Toggle para Single/Multi pass
-    std::vector <sRenderable> render_list;
-	std::vector<LightEntity*> light_list;
+		std::vector <sRenderable> render_list;
+		std::vector<LightEntity*> light_list;
+		
+		GFX::FBO* shadow_fbo = nullptr;
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;
@@ -59,6 +63,8 @@ namespace SCN {
 
 		//to render one mesh given its material and transformation matrix
 		void renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
+
+		void generateShadowMap();
 
 		void showUI();
 	};
