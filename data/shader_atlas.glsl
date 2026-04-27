@@ -73,6 +73,9 @@ uniform sampler2D u_shadow_map; // La textura de profundidad que creamos
 uniform mat4 u_shadow_vp;       // La matriz View-Projection de nuestra cámara de luz
 
 
+uniform sampler2D u_shadow_maps[MAX_LIGHTS]; 
+uniform mat4 u_shadow_vps[MAX_LIGHTS];
+
 uniform sampler2D u_normal_texture;
 uniform int u_has_normal_texture;
 uniform int u_show_normals;
@@ -80,32 +83,25 @@ uniform int u_show_normals;
 out vec4 FragColor;
 
 // --- FUNCIÓN DE CÁLCULO DE SOMBRAS ---
-float testShadow(vec3 world_pos) {
-    // 1. Proyectamos la posición del mundo al espacio de la luz
-    vec4 proj_pos = u_shadow_vp * vec4(world_pos, 1.0);
+float testShadow(vec3 world_pos, int index) {
+    vec4 proj_pos = u_shadow_vps[index] * vec4(world_pos, 1.0);
+    if (proj_pos.w <= 0.0) return 1.0;
 
-    // 2. Normalizamos XY dividiendo por W para sacar las coordenadas de textura (Clip Space a UV)
     vec2 uv = (proj_pos.xy / proj_pos.w) * 0.5 + 0.5;
+    float current_depth = (proj_pos.z / proj_pos.w) * 0.5 + 0.5;
+    current_depth -= u_shadow_bias; 
 
-    // 3. Calculamos la profundidad actual del píxel (Z).
-    // Aplicamos el Bias ANTES de dividir por W, tal como dicen tus apuntes para evitar el Acné.
-    float current_depth = (proj_pos.z - u_shadow_bias) / proj_pos.w;
-    current_depth = current_depth * 0.5 + 0.5; // Pasamos de rango [-1, 1] a [0, 1]
+    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || current_depth > 1.0) return 1.0;
 
-    // Si el píxel se sale de la textura de sombras (ej. detrás de la luz), no tiene sombra
-    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || current_depth > 1.0) {
-        return 1.0; 
-    }
+    // Selector de textura según el índice de la luz
+    float shadow_depth = 1.0;
+    if (index == 0) shadow_depth = texture(u_shadow_maps[0], uv).x;
+    else if (index == 1) shadow_depth = texture(u_shadow_maps[1], uv).x;
+    else if (index == 2) shadow_depth = texture(u_shadow_maps[2], uv).x;
+    else if (index == 3) shadow_depth = texture(u_shadow_maps[3], uv).x;
+    // ... puedes añadir hasta el 7 si quieres ser exhaustivo
 
-    // 4. Leemos la profundidad que guardamos en nuestra "foto"
-    float shadow_depth = texture(u_shadow_map, uv).x;
-
-    // 5. Comparamos: ¿Está nuestro píxel más lejos que el primer objeto que vio la luz?
-    if(current_depth > shadow_depth) {
-        return 0.0; // ¡Hay algo bloqueando la luz! Retornamos 0 (Sombra)
-    }
-
-    return 1.0; // No hay nada delante, recibe luz total
+    return (current_depth > shadow_depth) ? 0.0 : 1.0;
 }
 
 // --- FUNCIÓN DE CÁLCULO DE LUZ INDIVIDUAL ---
@@ -148,10 +144,10 @@ vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
     }
 
     // --- CÁLCULO DE SOMBRA ---
-    float shadow_factor = 1.0;
-    // Si es la primera luz Y nos han enviado un mapa de sombras, calculamos la sombra
-    if (index == 0 && u_has_shadow_map == 1) {
-        shadow_factor = testShadow(world_pos);
+	float shadow_factor = 1.0;
+    // Evitamos calcular sombras para luces puntuales (tipo 1)
+    if (u_has_shadow_map == 1 && u_light_types[index] != 1) {
+        shadow_factor = testShadow(world_pos, index);
     }
 
     vec3 light_intensity = u_light_colors[index] * attenuation * shadow_factor;

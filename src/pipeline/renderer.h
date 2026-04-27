@@ -38,8 +38,10 @@ namespace SCN {
 		std::vector <sRenderable> render_list;
 		std::vector<LightEntity*> light_list;
 		
-		GFX::FBO* shadow_fbo = nullptr;
-		Matrix44 shadow_viewprojection;
+		//GFX::FBO* shadow_fbo = nullptr;
+		//Matrix44 shadow_viewprojection;
+		GFX::FBO* shadow_fbos[MAX_LIGHTS];
+		Matrix44 shadow_viewprojections[MAX_LIGHTS];
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;

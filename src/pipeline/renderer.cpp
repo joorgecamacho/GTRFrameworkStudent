@@ -31,9 +31,9 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	scene = nullptr;
 	skybox_cubemap = nullptr;
 
-	if (shadow_fbo == nullptr) {
-		shadow_fbo = new GFX::FBO();
-		shadow_fbo->setDepthOnly(2048, 2048);
+	for (int i = 0; i < MAX_LIGHTS; ++i) {
+		shadow_fbos[i] = new GFX::FBO();
+		shadow_fbos[i]->setDepthOnly(1024, 1024);
 	}
  
 
@@ -225,14 +225,14 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
 
-	// Pasamos la matriz de la luz y el bias para el Shadow Acne
-	shader->setUniform("u_shadow_vp", this->shadow_viewprojection);
-	shader->setUniform("u_shadow_bias", 0.005f); // Un valor pequeñito para empezar
+	//// Pasamos la matriz de la luz y el bias para el Shadow Acne
+	//shader->setUniform("u_shadow_vp", this->shadow_viewprojection);
+	//shader->setUniform("u_shadow_bias", 0.005f); // Un valor pequeñito para empezar
 
-	// Pasamos la textura de profundidad al SLOT 3 (el 0 es albedo, el 1 normales)
-	if (shadow_fbo && shadow_fbo->depth_texture) {
-		shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 3);
-	}
+	//// Pasamos la textura de profundidad al SLOT 3 (el 0 es albedo, el 1 normales)
+	//if (shadow_fbo && shadow_fbo->depth_texture) {
+	//	shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 3);
+	//}
 
 	// Upload time, for cool shader effects
 	float t = getTime();
@@ -265,19 +265,25 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
 	if (single_pass) {
-		// ================= SINGLE PASS =================
+		// ================= SINGLE PASS DEFINITIVO =================
 		shader->setUniform3("u_ambient_light", this->scene->ambient_light);
 
-		// ---> AÑADE ESTO PARA QUE EL SHADER SEPA QUE HAY SOMBRA <---
-		if (shadow_fbo && shadow_fbo->depth_texture) {
-			shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 3);
-			shader->setUniform1("u_has_shadow_map", 1);
-		}
-		else {
-			shader->setUniform1("u_has_shadow_map", 0);
-		}
-		// -----------------------------------------------------------
+		// 1. Enviamos el aviso de que hay sombras y el array de matrices
+		shader->setUniform1("u_has_shadow_map", 1);
+		shader->setMatrix44Array("u_shadow_vps", &this->shadow_viewprojections[0], num_lights);
+		shader->setUniform("u_shadow_bias", 0.005f);
 
+		// 2. IMPORTANTE: Enviamos cada mapa de sombras a un slot diferente
+		for (int i = 0; i < num_lights; i++) {
+			char var_name[64];
+			sprintf(var_name, "u_shadow_maps[%d]", i);
+			if (shadow_fbos[i] && shadow_fbos[i]->depth_texture) {
+				// Slot 3 + i (Luz 0 -> Slot 3, Luz 1 -> Slot 4...)
+				shader->setUniform(var_name, shadow_fbos[i]->depth_texture, 3 + i);
+			}
+		}
+
+		// 3. Blending y resto de luces (como ya lo tenías)
 		if (material->alpha_mode == SCN::eAlphaMode::BLEND) {
 			glEnable(GL_BLEND);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -289,18 +295,10 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		shader->setUniform3Array("u_light_position", &light_positions[0].x, num_lights);
 		shader->setUniform3Array("u_light_colors", &light_colors[0].x, num_lights);
 		shader->setUniform1("u_num_lights", num_lights);
-		// Aquí no hacemos cast porque ya es int*
 		shader->setUniform1Array("u_light_types", &light_types[0], num_lights);
 		shader->setUniform3Array("u_light_directions", &light_directions[0].x, num_lights);
 		shader->setUniform2Array("u_light_cone_info", &light_cone_info[0].x, num_lights);
 
-		// Justo antes de mesh->render(GL_TRIANGLES);
-		shader->setUniform("u_shadow_vp", this->shadow_viewprojection);
-		shader->setUniform("u_shadow_bias", 0.0001f); // Valor recomendado en tus apuntes
-
-		if (shadow_fbo && shadow_fbo->depth_texture) {
-			shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 3);
-		}
 		mesh->render(GL_TRIANGLES);
 	}
 	else {
@@ -325,9 +323,19 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 					shader->setUniform3("u_ambient_light", this->scene->ambient_light);
 
 					// Le pasamos el Shadow Map porque esta es la luz que genera sombras
-					if (shadow_fbo && shadow_fbo->depth_texture) {
-						shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 3);
-						shader->setUniform1("u_has_shadow_map", 1); // Le avisamos al shader
+					if (shadow_fbos[i] && shadow_fbos[i]->depth_texture) {
+						shader->setUniform1("u_has_shadow_map", 1);
+						shader->setUniform("u_shadow_bias", 0.005f);
+
+						// En multipass enviamos la textura actual al slot u_shadow_maps[0] 
+						// porque para el shader, en esta pasada, solo existe 1 luz (la luz 0)
+						shader->setUniform("u_shadow_maps[0]", shadow_fbos[i]->depth_texture, 3);
+
+						// Enviamos SOLO la matriz de la luz actual
+						shader->setMatrix44Array("u_shadow_vps", &this->shadow_viewprojections[i], 1);
+					}
+					else {
+						shader->setUniform1("u_has_shadow_map", 0);
 					}
 
 					if (material->alpha_mode == SCN::eAlphaMode::BLEND) {
@@ -419,59 +427,65 @@ void Renderer::renderPlain(const Matrix44 model, GFX::Mesh* mesh, SCN::Material*
 	shader->disable();
 }
 void Renderer::generateShadowMap() {
-	// Si no hay luces o no hay fbo, no hacemos nada
-	if (light_list.empty() || shadow_fbo == nullptr) return;
+	if (light_list.empty()) return;
 
-	// Solo usamos la PRIMERA luz para este mapa simple
-	LightEntity* light_ent = light_list[0];
+	GLint default_viewport[4];
+	glGetIntegerv(GL_VIEWPORT, default_viewport);
 
-	// --- 1. MATEMÁTICAS DE LA CÁMARA ---
-	mat4 light_model = light_ent->root.getGlobalMatrix();
-	vec3 light_pos = light_model.getTranslation();
-	vec3 light_dir = light_ent->root.model.frontVector();
-	vec3 light_target = light_pos + light_dir;
+	int num_lights = (int)light_list.size() < MAX_LIGHTS ? (int)light_list.size() : MAX_LIGHTS;
 
-	Camera light_cam;
-	light_cam.lookAt(light_pos, light_target, vec3(0.0f, 1.0f, 0.0f));
+	// Hacemos una foto POR CADA LUZ
+	for (int i = 0; i < num_lights; ++i) {
+		LightEntity* light_ent = light_list[i];
 
-	if (light_ent->light_type == eLightType::SPOT) {
-		light_cam.setPerspective(light_ent->cone_info.y * RAD2DEG * 2.0f, 1.0f, light_ent->near_distance, light_ent->max_distance);
-	}
-	else if (light_ent->light_type == eLightType::DIRECTIONAL) {
-		float half_size = light_ent->area / 2.0f;
-		light_cam.setOrthographic(-half_size, half_size, -half_size, half_size, light_ent->near_distance, light_ent->max_distance);
-	}
+		// 1. Matemáticas de la cámara
+		mat4 light_model = light_ent->root.getGlobalMatrix();
+		vec3 light_pos = light_model.getTranslation();
+		vec3 light_dir = light_ent->root.model.frontVector();
+		vec3 light_target = light_pos + light_dir;
 
-	light_cam.updateViewMatrix();
-	light_cam.updateProjectionMatrix();
+		Camera light_cam;
+		light_cam.lookAt(light_pos, light_target, vec3(0.0f, 1.0f, 0.0f));
 
-	// Guardamos la matriz en la variable singular que tienes en renderer.h
-	this->shadow_viewprojection = light_cam.viewprojection_matrix;
-
-	// --- 2. RENDER A LA TEXTURA ---
-	shadow_fbo->bind();
-	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LESS);
-	glEnable(GL_CULL_FACE);
-	glFrontFace(GL_CW);
-	glColorMask(false, false, false, false);
-
-	// Limpieza de la textura
-	glClear(GL_DEPTH_BUFFER_BIT);
-
-	// Dibujamos todos los objetos opacos
-	for (int j = 0; j < render_list.size(); ++j) {
-		sRenderable& render_call = render_list[j];
-		if (render_call.material->alpha_mode != SCN::eAlphaMode::BLEND) {
-			renderPlain(render_call.matrix, render_call.mesh, render_call.material, &light_cam);
+		if (light_ent->light_type == eLightType::SPOT) {
+			light_cam.setPerspective(light_ent->cone_info.y * RAD2DEG * 2.0f, 1.0f, light_ent->near_distance, light_ent->max_distance);
 		}
+		else if (light_ent->light_type == eLightType::DIRECTIONAL) {
+			float half_size = light_ent->area / 2.0f;
+			light_cam.setOrthographic(-half_size, half_size, -half_size, half_size, light_ent->near_distance, light_ent->max_distance);
+		}
+
+		light_cam.updateViewMatrix();
+		light_cam.updateProjectionMatrix();
+
+		// Guardamos la matriz de ESTA luz en la celda 'i'
+		this->shadow_viewprojections[i] = light_cam.viewprojection_matrix;
+
+		// 2. Renderizar al FBO de esta luz en concreto
+		shadow_fbos[i]->bind();
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LESS);
+		glEnable(GL_CULL_FACE);
+		glFrontFace(GL_CW);
+		glColorMask(false, false, false, false);
+
+		glClear(GL_DEPTH_BUFFER_BIT);
+
+		for (int j = 0; j < render_list.size(); ++j) {
+			sRenderable& render_call = render_list[j];
+			if (render_call.material->alpha_mode != SCN::eAlphaMode::BLEND) {
+				renderPlain(render_call.matrix, render_call.mesh, render_call.material, &light_cam);
+			}
+		}
+
+		// 3. Restaurar estado antes de pasar a la siguiente luz
+		glColorMask(true, true, true, true);
+		glFrontFace(GL_CCW);
+		glDisable(GL_CULL_FACE);
+		shadow_fbos[i]->unbind();
 	}
 
-	// --- 3. RESTAURAR ESTADO ---
-	glColorMask(true, true, true, true);
-	glFrontFace(GL_CCW);
-	glDisable(GL_CULL_FACE);
-	shadow_fbo->unbind();
+	glViewport(default_viewport[0], default_viewport[1], default_viewport[2], default_viewport[3]);
 }
 #ifndef SKIP_IMGUI
 
@@ -482,6 +496,7 @@ void Renderer::showUI()
 	ImGui::Checkbox("Boundaries", &render_boundaries);
 	ImGui::Checkbox("Enable Normal Maps", &show_normals);
 	ImGui::Checkbox("Single Pass", &single_pass);
+
 
 	//add here your stuff
 	//...
