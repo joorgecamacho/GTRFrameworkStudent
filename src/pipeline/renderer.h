@@ -29,7 +29,7 @@ namespace SCN {
 	class Renderer
 	{
 	public:
-		const int MAX_LIGHTS = 8;
+		static const int MAX_LIGHTS = 8;
 
 		bool render_wireframe;
 		bool render_boundaries;
@@ -39,6 +39,7 @@ namespace SCN {
 		std::vector<LightEntity*> light_list;
 		
 		GFX::FBO* shadow_fbo = nullptr;
+		Matrix44 shadow_viewprojection;
 		GFX::Texture* skybox_cubemap;
 
 		SCN::Scene* scene;
@@ -64,6 +65,8 @@ namespace SCN {
 		//to render one mesh given its material and transformation matrix
 		void renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
 
+		void renderPlain(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material, Camera* light_cam);
+		
 		void generateShadowMap();
 
 		void showUI();
