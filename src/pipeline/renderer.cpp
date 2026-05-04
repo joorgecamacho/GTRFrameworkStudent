@@ -128,27 +128,71 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	setupScene();
 
 	parseSceneEntities(scene, camera);
+	
+	
+	// ==========================================
+	// ASSIGNMENT 4: TAREA 2.1: INICIALIZAR EL G-BUFFER
+	// ==========================================
+	// Obtenemos el tamaño actual de la pantalla leyendo el viewport de OpenGL
+	GLint viewport[4];
+	glGetIntegerv(GL_VIEWPORT, viewport);
+	int width = viewport[2];
+	int height = viewport[3];
+
+	// Si el FBO no existe, o si la ventana ha cambiado de tamaño, lo (re)creamos
+	if (gbuffer_fbo == nullptr || gbuffer_fbo->color_textures[0]->width != width || gbuffer_fbo->color_textures[0]->height != height) {
+		if (gbuffer_fbo) delete gbuffer_fbo;
+		gbuffer_fbo = new GFX::FBO();
+
+		// create(width, height, num_color_textures, format, type, use_depth)
+		// Pedimos: 2 texturas (Color y Normales), formato RGBA (4 canales), de 8 bits (UNSIGNED_BYTE) y CON buffer de profundidad (true)
+		gbuffer_fbo->create(width, height, 2, GL_RGBA, GL_UNSIGNED_BYTE, true);
+	}
+	// ==========================================
+
+
 
 	// TAREA 3.2: Generar el Shadow Map de la luz antes de dibujar la escena final
 	generateShadowMap();
 
-	//set the clear color (the background color)
-	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
+	// ==========================================
+	// ASSIGNMMENT 4: TAREA 2.2 (CPU): LLENAR EL G-BUFFER
+	// ==========================================
 
-	// Clear the color and the depth buffer
+	// 1. Redirigir el renderizado hacia nuestro G-Buffer
+	gbuffer_fbo->bind();
+
+	// 2. Limpiamos el G-Buffer (Color y Depth)
+	// El clear color determina el color "vacío" de nuestra textura de Albedo
+	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	GFX::checkGLErrors();
 
-	//render skybox
-	if(skybox_cubemap)
+	// 3. Renderizamos el Skybox (que irá al G-Buffer)
+	if (skybox_cubemap)
 		renderSkybox(skybox_cubemap);
 
-	// HERE =====================
-	// TODO: RENDER RENDERABLES
-	// ==========================
+	// 4. Renderizamos la geometría opaca
 	for (int i = 0; i < render_list.size(); i++) {
+		// En deferred, los objetos con transparencia (BLEND) se saltan en esta fase
+		// y se dibujan más tarde.
+		if (render_list[i].material->alpha_mode == SCN::eAlphaMode::BLEND) {
+			continue;
+		}
 		renderMeshWithMaterial(render_list[i].matrix, render_list[i].mesh, render_list[i].material);
 	}
+
+	// 5. Dejamos de dibujar en el G-Buffer y volvemos a la pantalla
+	gbuffer_fbo->unbind();
+
+	// --- DEBUG: Mostrar el G-Buffer en pantalla para comprobar que funciona ---[cite: 1]
+	// Esto es temporal, lo quitaremos en el paso 2.3
+	glClearColor(0.0, 0.0, 0.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	// Mostramos la textura 0 (Color) a pantalla completa
+	gbuffer_fbo->color_textures[0]->toViewport();
+	// Puedes cambiar el índice a 1 para ver las normales: gbuffer_fbo->color_textures[1]->toViewport();
 }
 
 
@@ -207,8 +251,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	glEnable(GL_DEPTH_TEST);
 
 	//chose a shader
-	shader = GFX::Shader::Get("phong");
-
+	shader = GFX::Shader::Get("gbuffer");
     assert(glGetError() == GL_NO_ERROR);
 
 	//no shader? then nothing to render

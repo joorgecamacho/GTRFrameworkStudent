@@ -4,7 +4,7 @@ texture basic.vs texture.fs
 phong basic.vs phong.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
-multi basic.vs multi.fs
+gbuffer basic.vs gbuffer.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -321,46 +321,20 @@ in vec3 v_world_position;
 
 uniform samplerCube u_texture;
 uniform vec3 u_camera_position;
-out vec4 FragColor;
+
+// Salidas múltiples
+layout(location = 0) out vec4 gbuffer_albedo;
+layout(location = 1) out vec4 gbuffer_normal;
 
 void main()
 {
 	vec3 E = v_world_position - u_camera_position;
 	vec4 color = texture( u_texture, E );
-	FragColor = color;
-}
-
-
-\multi.fs
-
-#version 330 core
-
-in vec3 v_position;
-in vec3 v_world_position;
-in vec3 v_normal;
-in vec2 v_uv;
-
-uniform vec4 u_color;
-uniform sampler2D u_texture;
-uniform float u_time;
-uniform float u_alpha_cutoff;
-
-layout(location = 0) out vec4 FragColor;
-layout(location = 1) out vec4 NormalColor;
-
-void main()
-{
-	vec2 uv = v_uv;
-	vec4 color = u_color;
-	color *= texture( u_texture, uv );
-
-	if(color.a < u_alpha_cutoff)
-		discard;
-
-	vec3 N = normalize(v_normal);
-
-	FragColor = color;
-	NormalColor = vec4(N,1.0);
+	
+    gbuffer_albedo = color;
+    // El skybox no tiene normales reales que afecten a la luz, 
+    // pero debemos escribir algo en el canal de normales para que la textura no quede con basura.
+    gbuffer_normal = vec4(0.5, 0.5, 0.5, 1.0); // Una normal "nula" en rango empaquetado 0-1
 }
 
 
@@ -419,4 +393,57 @@ void main()
 
 	//calcule the position of the vertex using the matrices
 	gl_Position = u_viewprojection * vec4( v_world_position, 1.0 );
+}
+
+\gbuffer.fs
+#version 330 core
+
+#include "perturbNormal"
+
+in vec3 v_position;
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+in vec4 v_color;
+
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_alpha_cutoff;
+
+uniform sampler2D u_normal_texture;
+uniform int u_has_normal_texture;
+uniform int u_show_normals;
+
+// TAREA 2.2: Declarar las salidas a múltiples texturas[cite: 1]
+layout(location = 0) out vec4 gbuffer_albedo;
+layout(location = 1) out vec4 gbuffer_normal;
+
+void main()
+{
+    // 1. Color base
+    vec4 color = u_color * texture(u_texture, v_uv);
+
+    // Checkerboard para "Transparencias falsas" (Paso 2.4 de tu assignment)[cite: 1]
+    // Si la opacidad es baja, descartamos píxeles en forma de damero
+    if(color.a < 0.99) {
+        if(color.a < u_alpha_cutoff || 
+           floor(mod(gl_FragCoord.x, 2.0)) != floor(mod(gl_FragCoord.y, 2.0))) {
+            discard;
+        }
+    }
+
+    // 2. Normal Mapping (Igual que en tu phong.fs)
+    vec3 N = normalize(v_normal);
+    if (u_has_normal_texture == 1 && u_show_normals == 1) {
+        vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
+        normal_pixel = normal_pixel * 2.0 - 1.0;
+        N = perturbNormal(N, v_world_position, v_uv, normal_pixel);
+    }
+
+    // 3. Escribir en el G-Buffer
+    gbuffer_albedo = vec4(color.rgb, 1.0);
+    
+    // IMPORTANTE: Las normales van de -1 a 1, pero la textura guarda valores de 0 a 1.[cite: 1]
+    // Hay que empaquetarlas:
+    gbuffer_normal = vec4(N * 0.5 + 0.5, 1.0); 
 }

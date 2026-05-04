@@ -44,6 +44,8 @@ namespace SCN {
 		Matrix44 shadow_viewprojections[MAX_LIGHTS];
 		GFX::Texture* skybox_cubemap;
 
+		GFX::FBO* gbuffer_fbo = nullptr;
+
 		SCN::Scene* scene;
 
 		//updated every frame
