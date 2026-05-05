@@ -418,14 +418,8 @@ void Renderer::renderDeferred(Camera* camera) {
 		if (shadow_fbos[first_dir_idx] && shadow_fbos[first_dir_idx]->depth_texture) {
 			global_shader->setUniform1("u_has_shadow_map", 1);
 			global_shader->setUniform("u_shadow_bias", 0.01f);
-			global_shader->setMatrix44Array("u_shadow_vps", &shadow_viewprojections[0], MAX_LIGHTS); // enviamos todas
-			for(int k=0; k<MAX_LIGHTS; k++) {
-				char var_name[64];
-				sprintf(var_name, "u_shadow_maps[%d]", k);
-				if (shadow_fbos[k] && shadow_fbos[k]->depth_texture) {
-					global_shader->setUniform(var_name, shadow_fbos[k]->depth_texture, 3 + k);
-				}
-			}
+			global_shader->setUniform("u_shadow_vp", shadow_viewprojections[first_dir_idx]);
+			global_shader->setUniform("u_shadow_map", shadow_fbos[first_dir_idx]->depth_texture, 3);
 		} else {
 			global_shader->setUniform1("u_has_shadow_map", 0);
 		}

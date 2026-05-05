@@ -471,31 +471,22 @@ uniform vec3 u_dir_light_color[MAX_LIGHTS];
 uniform vec3 u_dir_light_direction[MAX_LIGHTS];
 uniform float u_shininess;
 
-// Shadow maps for directional lights
+// Shadow map for first directional light
 uniform int u_has_shadow_map;
 uniform float u_shadow_bias;
-uniform sampler2D u_shadow_maps[MAX_LIGHTS];
-uniform mat4 u_shadow_vps[MAX_LIGHTS];
-uniform int u_dir_light_indices[MAX_LIGHTS]; // index into global light list
+uniform sampler2D u_shadow_map;
+uniform mat4 u_shadow_vp;
 
 out vec4 FragColor;
 
-float testShadow(vec3 world_pos, int index) {
-    vec4 proj_pos = u_shadow_vps[index] * vec4(world_pos, 1.0);
+float testShadow(vec3 world_pos) {
+    vec4 proj_pos = u_shadow_vp * vec4(world_pos, 1.0);
     if (proj_pos.w <= 0.0) return 1.0;
     vec2 uv = (proj_pos.xy / proj_pos.w) * 0.5 + 0.5;
     float current_depth = (proj_pos.z / proj_pos.w) * 0.5 + 0.5;
     current_depth -= u_shadow_bias;
     if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || current_depth > 1.0) return 1.0;
-    float shadow_depth = 1.0;
-    if (index == 0) shadow_depth = texture(u_shadow_maps[0], uv).x;
-    else if (index == 1) shadow_depth = texture(u_shadow_maps[1], uv).x;
-    else if (index == 2) shadow_depth = texture(u_shadow_maps[2], uv).x;
-    else if (index == 3) shadow_depth = texture(u_shadow_maps[3], uv).x;
-    else if (index == 4) shadow_depth = texture(u_shadow_maps[4], uv).x;
-    else if (index == 5) shadow_depth = texture(u_shadow_maps[5], uv).x;
-    else if (index == 6) shadow_depth = texture(u_shadow_maps[6], uv).x;
-    else if (index == 7) shadow_depth = texture(u_shadow_maps[7], uv).x;
+    float shadow_depth = texture(u_shadow_map, uv).x;
     return (current_depth > shadow_depth) ? 0.0 : 1.0;
 }
 
@@ -535,8 +526,8 @@ void main()
         
         // Shadow
         float shadow = 1.0;
-        if (u_has_shadow_map == 1) {
-            shadow = testShadow(world_pos, u_dir_light_indices[i]);
+        if (u_has_shadow_map == 1 && i == 0) {
+            shadow = testShadow(world_pos);
         }
         
         // Diffuse
