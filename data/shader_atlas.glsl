@@ -4,7 +4,10 @@ texture basic.vs texture.fs
 phong basic.vs phong.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
+depth_write quad.vs depth_write.fs
 gbuffer basic.vs gbuffer.fs
+deferred_global quad.vs deferred_global.fs
+deferred_light basic.vs deferred_light.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -54,9 +57,9 @@ uniform sampler2D u_texture;
 uniform float u_time;
 uniform float u_alpha_cutoff;
 
-// Uniforms de iluminación (nuevos)
+// Uniforms de iluminaciÃ³n (nuevos)
 uniform vec3 u_ambient_light;     // luz ambiental de la escena
-uniform vec3 u_camera_position;   // posición de la cámara (para specular)
+uniform vec3 u_camera_position;   // posiciÃ³n de la cÃ¡mara (para specular)
 uniform float u_shininess;        // alpha/shininess del material
 
 uniform float u_shadow_bias;
@@ -66,11 +69,9 @@ const int MAX_LIGHTS = 8;
 uniform vec3 u_light_position[MAX_LIGHTS];
 uniform vec3 u_light_colors[MAX_LIGHTS];
 uniform int u_light_types[MAX_LIGHTS];       // 1=POINT, 2=SPOT, 3=DIRECTIONAL
-uniform vec3 u_light_directions[MAX_LIGHTS]; // dirección frontal de la luz
+uniform vec3 u_light_directions[MAX_LIGHTS]; // direcciÃ³n frontal de la luz
 uniform vec2 u_light_cone_info[MAX_LIGHTS];  // x=alpha_min, y=alpha_max (en radianes)
 uniform int u_num_lights;
-uniform sampler2D u_shadow_map; // La textura de profundidad que creamos
-uniform mat4 u_shadow_vp;       // La matriz View-Projection de nuestra cámara de luz
 
 
 uniform sampler2D u_shadow_maps[MAX_LIGHTS]; 
@@ -82,7 +83,7 @@ uniform int u_show_normals;
 
 out vec4 FragColor;
 
-// --- FUNCIÓN DE CÁLCULO DE SOMBRAS ---
+// --- FUNCIÃ“N DE CÃLCULO DE SOMBRAS ---
 float testShadow(vec3 world_pos, int index) {
     vec4 proj_pos = u_shadow_vps[index] * vec4(world_pos, 1.0);
     if (proj_pos.w <= 0.0) return 1.0;
@@ -93,19 +94,23 @@ float testShadow(vec3 world_pos, int index) {
 
     if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || current_depth > 1.0) return 1.0;
 
-    // Selector de textura según el índice de la luz
+    // Selector de textura segÃºn el Ã­ndice de la luz
     float shadow_depth = 1.0;
     if (index == 0) shadow_depth = texture(u_shadow_maps[0], uv).x;
     else if (index == 1) shadow_depth = texture(u_shadow_maps[1], uv).x;
     else if (index == 2) shadow_depth = texture(u_shadow_maps[2], uv).x;
     else if (index == 3) shadow_depth = texture(u_shadow_maps[3], uv).x;
-    // ... puedes añadir hasta el 7 si quieres ser exhaustivo
+    else if (index == 4) shadow_depth = texture(u_shadow_maps[4], uv).x;
+    else if (index == 5) shadow_depth = texture(u_shadow_maps[5], uv).x;
+    else if (index == 6) shadow_depth = texture(u_shadow_maps[6], uv).x;
+    else if (index == 7) shadow_depth = texture(u_shadow_maps[7], uv).x;
 
     return (current_depth > shadow_depth) ? 0.0 : 1.0;
 }
 
-// --- FUNCIÓN DE CÁLCULO DE LUZ INDIVIDUAL ---
-// --- FUNCIÓN DE CÁLCULO DE LUZ INDIVIDUAL ---
+
+// --- FUNCIÃ“N DE CÃLCULO DE LUZ INDIVIDUAL ---
+// --- FUNCIÃ“N DE CÃLCULO DE LUZ INDIVIDUAL ---
 vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
     vec3 L;
     float attenuation;
@@ -143,7 +148,7 @@ vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
         }
     }
 
-    // --- CÁLCULO DE SOMBRA ---
+    // --- CÃLCULO DE SOMBRA ---
 	float shadow_factor = 1.0;
     // Evitamos calcular sombras para luces puntuales (tipo 1)
     if (u_has_shadow_map == 1 && u_light_types[index] != 1) {
@@ -152,7 +157,7 @@ vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
 
     vec3 light_intensity = u_light_colors[index] * attenuation * shadow_factor;
     
-    // Declaramos la variable que se había borrado
+    // Declaramos la variable que se habÃ­a borrado
     vec3 result_color = vec3(0.0);
 
     // Diffuse
@@ -181,7 +186,7 @@ void main()
 
 	// 2. Normal Mapping
 	vec3 N = normalize(v_normal);
-	// Si u_show_normals == 1 aplicamos el Normal Map, si es 0 usamos la normal geométrica plana
+	// Si u_show_normals == 1 aplicamos el Normal Map, si es 0 usamos la normal geomÃ©trica plana
 	if (u_has_normal_texture == 1 && u_show_normals == 1) {
 		// Leer textura de normales [0, 1]
 		vec3 normal_pixel = texture(u_normal_texture, uv).xyz;
@@ -322,7 +327,7 @@ in vec3 v_world_position;
 uniform samplerCube u_texture;
 uniform vec3 u_camera_position;
 
-// Salidas múltiples
+// Salidas mÃºltiples
 layout(location = 0) out vec4 gbuffer_albedo;
 layout(location = 1) out vec4 gbuffer_normal;
 
@@ -414,7 +419,7 @@ uniform sampler2D u_normal_texture;
 uniform int u_has_normal_texture;
 uniform int u_show_normals;
 
-// TAREA 2.2: Declarar las salidas a múltiples texturas[cite: 1]
+// TAREA 2.2: Declarar las salidas a mÃºltiples texturas[cite: 1]
 layout(location = 0) out vec4 gbuffer_albedo;
 layout(location = 1) out vec4 gbuffer_normal;
 
@@ -423,13 +428,9 @@ void main()
     // 1. Color base
     vec4 color = u_color * texture(u_texture, v_uv);
 
-    // Checkerboard para "Transparencias falsas" (Paso 2.4 de tu assignment)[cite: 1]
-    // Si la opacidad es baja, descartamos píxeles en forma de damero
-    if(color.a < 0.99) {
-        if(color.a < u_alpha_cutoff || 
-           floor(mod(gl_FragCoord.x, 2.0)) != floor(mod(gl_FragCoord.y, 2.0))) {
-            discard;
-        }
+    // Alpha masking para materiales tipo MASK (hojas, rejas, etc.)
+    if(color.a < u_alpha_cutoff) {
+        discard;
     }
 
     // 2. Normal Mapping (Igual que en tu phong.fs)
@@ -446,4 +447,246 @@ void main()
     // IMPORTANTE: Las normales van de -1 a 1, pero la textura guarda valores de 0 a 1.[cite: 1]
     // Hay que empaquetarlas:
     gbuffer_normal = vec4(N * 0.5 + 0.5, 1.0); 
+}
+
+\deferred_global.fs
+
+#version 330 core
+
+in vec2 v_uv;
+
+uniform sampler2D u_albedo_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_depth_texture;
+
+uniform vec3 u_ambient_light;
+uniform vec3 u_camera_position;
+uniform mat4 u_inverse_viewprojection;
+uniform vec2 u_iRes; // 1.0 / screen size
+
+// Directional lights
+const int MAX_LIGHTS = 8;
+uniform int u_num_dir_lights;
+uniform vec3 u_dir_light_color[MAX_LIGHTS];
+uniform vec3 u_dir_light_direction[MAX_LIGHTS];
+uniform float u_shininess;
+
+// Shadow maps for directional lights
+uniform int u_has_shadow_map;
+uniform float u_shadow_bias;
+uniform sampler2D u_shadow_maps[MAX_LIGHTS];
+uniform mat4 u_shadow_vps[MAX_LIGHTS];
+uniform int u_dir_light_indices[MAX_LIGHTS]; // index into global light list
+
+out vec4 FragColor;
+
+float testShadow(vec3 world_pos, int index) {
+    vec4 proj_pos = u_shadow_vps[index] * vec4(world_pos, 1.0);
+    if (proj_pos.w <= 0.0) return 1.0;
+    vec2 uv = (proj_pos.xy / proj_pos.w) * 0.5 + 0.5;
+    float current_depth = (proj_pos.z / proj_pos.w) * 0.5 + 0.5;
+    current_depth -= u_shadow_bias;
+    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || current_depth > 1.0) return 1.0;
+    float shadow_depth = 1.0;
+    if (index == 0) shadow_depth = texture(u_shadow_maps[0], uv).x;
+    else if (index == 1) shadow_depth = texture(u_shadow_maps[1], uv).x;
+    else if (index == 2) shadow_depth = texture(u_shadow_maps[2], uv).x;
+    else if (index == 3) shadow_depth = texture(u_shadow_maps[3], uv).x;
+    else if (index == 4) shadow_depth = texture(u_shadow_maps[4], uv).x;
+    else if (index == 5) shadow_depth = texture(u_shadow_maps[5], uv).x;
+    else if (index == 6) shadow_depth = texture(u_shadow_maps[6], uv).x;
+    else if (index == 7) shadow_depth = texture(u_shadow_maps[7], uv).x;
+    return (current_depth > shadow_depth) ? 0.0 : 1.0;
+}
+
+void main()
+{
+    vec2 uv = gl_FragCoord.xy * u_iRes;
+    
+    // Read G-Buffer
+    vec3 albedo = texture(u_albedo_texture, uv).rgb;
+    vec3 N = texture(u_normal_texture, uv).rgb * 2.0 - 1.0;
+    N = normalize(N);
+    float depth = texture(u_depth_texture, uv).x;
+    
+    // If depth==1.0, it is skybox, just output albedo (skybox color)
+    if (depth >= 0.9999) {
+        FragColor = vec4(albedo, 1.0);
+        return;
+    }
+    
+    // Reconstruct world position from depth
+    vec2 screen_uv = uv * 2.0 - 1.0;
+    vec4 screen_pos = vec4(screen_uv, depth * 2.0 - 1.0, 1.0);
+    vec4 world_pos4 = u_inverse_viewprojection * screen_pos;
+    vec3 world_pos = world_pos4.xyz / world_pos4.w;
+    
+    vec3 V = normalize(u_camera_position - world_pos);
+    
+    // Start with ambient
+    vec3 out_color = u_ambient_light * albedo;
+    
+    // Add directional lights
+    for (int i = 0; i < MAX_LIGHTS; i++) {
+        if (i >= u_num_dir_lights) break;
+        
+        vec3 L = normalize(-u_dir_light_direction[i]);
+        vec3 light_color = u_dir_light_color[i];
+        
+        // Shadow
+        float shadow = 1.0;
+        if (u_has_shadow_map == 1) {
+            shadow = testShadow(world_pos, u_dir_light_indices[i]);
+        }
+        
+        // Diffuse
+        float NdotL = clamp(dot(N, L), 0.0, 1.0);
+        out_color += albedo * NdotL * light_color * shadow;
+        
+        // Specular
+        vec3 R = reflect(-L, N);
+        float RdotV = clamp(dot(R, V), 0.0, 1.0);
+        out_color += albedo * pow(RdotV, u_shininess) * light_color * shadow;
+    }
+    
+    FragColor = vec4(out_color, 1.0);
+}
+
+
+\deferred_light.fs
+
+#version 330 core
+
+in vec3 v_position;
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+
+uniform sampler2D u_albedo_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_depth_texture;
+
+uniform vec3 u_camera_position;
+uniform mat4 u_inverse_viewprojection;
+uniform vec2 u_iRes;
+
+// Single light data
+uniform vec3 u_light_position;
+uniform vec3 u_light_color;
+uniform int u_light_type; // 1=POINT, 2=SPOT
+uniform vec3 u_light_direction;
+uniform vec2 u_light_cone_info;
+uniform float u_max_distance;
+uniform float u_shininess;
+
+// Shadow
+uniform int u_has_shadow_map;
+uniform float u_shadow_bias;
+uniform sampler2D u_shadow_map;
+uniform mat4 u_shadow_vp;
+
+out vec4 FragColor;
+
+void main()
+{
+    // Calculate screen UV from fragment position
+    vec2 uv = gl_FragCoord.xy * u_iRes;
+    
+    // Read G-Buffer
+    vec3 albedo = texture(u_albedo_texture, uv).rgb;
+    vec3 N = texture(u_normal_texture, uv).rgb * 2.0 - 1.0;
+    N = normalize(N);
+    float depth = texture(u_depth_texture, uv).x;
+    
+    // If depth==1.0, skybox, no lighting
+    if (depth >= 1.0) discard;
+    
+    // Reconstruct world position from depth
+    vec2 screen_uv = uv * 2.0 - 1.0;
+    vec4 screen_pos = vec4(screen_uv, depth * 2.0 - 1.0, 1.0);
+    vec4 world_pos4 = u_inverse_viewprojection * screen_pos;
+    vec3 world_pos = world_pos4.xyz / world_pos4.w;
+    
+    vec3 V = normalize(u_camera_position - world_pos);
+    
+    // Compute light
+    vec3 L;
+    float attenuation;
+    
+    if (u_light_type == 1) {
+        // POINT
+        L = normalize(u_light_position - world_pos);
+        float dist = length(u_light_position - world_pos);
+        if (dist > u_max_distance) discard;
+        attenuation = 1.0 / (dist * dist);
+    }
+    else if (u_light_type == 2) {
+        // SPOT
+        L = normalize(u_light_position - world_pos);
+        float dist = length(u_light_position - world_pos);
+        if (dist > u_max_distance) discard;
+        attenuation = 1.0 / (dist * dist);
+        
+        vec3 D = normalize(u_light_direction);
+        float cos_angle = dot(-L, D);
+        float cos_alpha_max = cos(u_light_cone_info.y);
+        float cos_alpha_min = cos(u_light_cone_info.x);
+        
+        if (cos_angle < cos_alpha_max) {
+            discard;
+        } else {
+            float spot_factor = clamp(
+                (cos_angle - cos_alpha_max) / (cos_alpha_min - cos_alpha_max),
+                0.0, 1.0
+            );
+            attenuation *= spot_factor;
+        }
+    }
+    else {
+        discard;
+    }
+    
+    // Shadow
+    float shadow = 1.0;
+    if (u_has_shadow_map == 1 && u_light_type != 1) {
+        vec4 proj_pos = u_shadow_vp * vec4(world_pos, 1.0);
+        if (proj_pos.w > 0.0) {
+            vec2 shadow_uv = (proj_pos.xy / proj_pos.w) * 0.5 + 0.5;
+            float current_depth = (proj_pos.z / proj_pos.w) * 0.5 + 0.5;
+            current_depth -= u_shadow_bias;
+            if (shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 && current_depth <= 1.0) {
+                float shadow_depth = texture(u_shadow_map, shadow_uv).x;
+                shadow = (current_depth > shadow_depth) ? 0.0 : 1.0;
+            }
+        }
+    }
+    
+    vec3 light_intensity = u_light_color * attenuation * shadow;
+    
+    // NO ambient here! Only diffuse + specular
+    vec3 result = vec3(0.0);
+    
+    // Diffuse
+    float NdotL = clamp(dot(N, L), 0.0, 1.0);
+    result += albedo * NdotL * light_intensity;
+    
+    // Specular
+    vec3 R = reflect(-L, N);
+    float RdotV = clamp(dot(R, V), 0.0, 1.0);
+    result += albedo * pow(RdotV, u_shininess) * light_intensity;
+    
+    FragColor = vec4(result, 1.0);
+}
+
+\depth_write.fs
+
+#version 330 core
+
+uniform sampler2D u_depth_texture;
+in vec2 v_uv;
+out vec4 FragColor;
+
+void main() {
+    gl_FragDepth = texture(u_depth_texture, v_uv).x;
+    FragColor = vec4(0.0);
 }

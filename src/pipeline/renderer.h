@@ -35,6 +35,7 @@ namespace SCN {
 		bool render_boundaries;
 		bool show_normals = true; // Nueva variable para el modo debug de normales
 		bool single_pass = true; // Toggle para Single/Multi pass
+		bool use_deferred = true; // Toggle para Forward/Deferred pipeline
 		std::vector <sRenderable> render_list;
 		std::vector<LightEntity*> light_list;
 		
@@ -45,6 +46,7 @@ namespace SCN {
 		GFX::Texture* skybox_cubemap;
 
 		GFX::FBO* gbuffer_fbo = nullptr;
+		GFX::FBO* illumination_fbo = nullptr; // FBO para la iluminación final (paso 2.4.1)
 
 		SCN::Scene* scene;
 
@@ -69,9 +71,18 @@ namespace SCN {
 		//to render one mesh given its material and transformation matrix
 		void renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
 
+		// Forward render for transparent objects (reuses phong shader with all lights)
+		void renderMeshWithMaterialForward(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
+
 		void renderPlain(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material, Camera* light_cam);
 		
 		void generateShadowMap();
+
+		// Deferred rendering pipeline
+		void renderDeferred(Camera* camera);
+
+		// Forward rendering pipeline (original)
+		void renderForward(Camera* camera);
 
 		void showUI();
 	};
