@@ -499,26 +499,15 @@ void Renderer::renderDeferred(Camera* camera) {
 	// ==========================================
 	// ASSIGNMENT 4: TAREA 2.4 (FINAL): RENDER FORWARD DE TRANSPARENCIAS
 	// ==========================================
-	
-	// Dibujar transparencias con Forward rendering en el illumination FBO
-	illumination_fbo->bind();
-	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LESS);
-	for (int i = 0; i < render_list.size(); i++) {
-		if (render_list[i].material->alpha_mode == SCN::eAlphaMode::BLEND) {
-			renderMeshWithMaterialForward(render_list[i].matrix, render_list[i].mesh, render_list[i].material);
-		}
-	}
-	illumination_fbo->unbind();
 
-	// Copiar Illumination a pantalla
+	// 1. Copiar Illumination a pantalla (solo opacos iluminados)
 	glClearColor(0.0, 0.0, 0.0, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	illumination_fbo->color_textures[0]->toViewport();
 	
-	// Copiamos la profundidad usando un shader en lugar de glBlitFramebuffer
+	// 2. Copiamos la profundidad usando un shader en lugar de glBlitFramebuffer
 	// ya que el glBlitFramebuffer al FBO por defecto (0) falla por incompatibilidad
-	// de formato (GL_DEPTH_COMPONENT vs GL_DEPTH24_STENCIL8).
+	// de formato. Esto permite que las transparencias se ocluyan por los opacos.
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_ALWAYS);
 	glColorMask(false, false, false, false);
@@ -531,6 +520,17 @@ void Renderer::renderDeferred(Camera* camera) {
 	}
 	glColorMask(true, true, true, true);
 	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE); // Asegurar que podemos escribir profundidad
+
+	// 3. Dibujar transparencias DIRECTAMENTE en el viewport
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (int i = 0; i < render_list.size(); i++) {
+		if (render_list[i].material->alpha_mode == SCN::eAlphaMode::BLEND) {
+			renderMeshWithMaterialForward(render_list[i].matrix, render_list[i].mesh, render_list[i].material);
+		}
+	}
+	glDisable(GL_BLEND);
 }
 
 void Renderer::renderMeshWithMaterialForward(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material) {
