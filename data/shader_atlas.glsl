@@ -38,11 +38,80 @@ vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
 	return normalize(TBN * normal_pixel);
 }
 
+\PBR_functions
+
+const float PI = 3.14159265359;
+const float EPSILON = 0.0001;
+
+float saturate(float x)
+{
+	return clamp(x, 0.0, 1.0);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+	float clampedCosTheta = saturate(cosTheta);
+	float oneMinusCosTheta = 1.0 - clampedCosTheta;
+	float oneMinusCosTheta2 = oneMinusCosTheta * oneMinusCosTheta;
+	float oneMinusCosTheta5 = oneMinusCosTheta2 * oneMinusCosTheta2 * oneMinusCosTheta;
+	return F0 + (1.0 - F0) * oneMinusCosTheta5;
+}
+
+float distributionGGX(vec3 N, vec3 H, float roughness)
+{
+	float alpha = roughness * roughness;
+	float alpha2 = alpha * alpha;
+	float NdotH = saturate(dot(N, H));
+	float NdotH2 = NdotH * NdotH;
+	float d = NdotH2 * (alpha2 - 1.0) + 1.0;
+	float denom = PI * d * d + EPSILON;
+	return alpha2 / denom;
+}
+
+float geometrySchlickGGX(float NdotX, float roughness)
+{
+	float n = saturate(NdotX);
+	float alpha = roughness * roughness;
+	float k = alpha * 0.5;
+	float denom = n * (1.0 - k) + k + EPSILON;
+	return n / denom;
+}
+
+float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+{
+	float NdotV = saturate(dot(N, V));
+	float NdotL = saturate(dot(N, L));
+	float ggxV = geometrySchlickGGX(NdotV, roughness);
+	float ggxL = geometrySchlickGGX(NdotL, roughness);
+	return ggxV * ggxL;
+}
+
+vec3 cookTorranceDiffuseBRDF(vec3 albedo, float metalness)
+{
+	vec3 kd = (1.0 - metalness) * albedo;
+	return kd / PI;
+}
+
+vec3 cookTorranceSpecularBRDF(vec3 N, vec3 V, vec3 L, vec3 albedo, float metalness, float roughness)
+{
+	vec3 F0 = mix(vec3(0.04), albedo, metalness);
+	vec3 H = normalize(V + L);
+	float NdotL = saturate(dot(N, L));
+	float NdotV = saturate(dot(N, V));
+	float VdotH = saturate(dot(V, H));
+	vec3 F = fresnelSchlick(VdotH, F0);
+	float D = distributionGGX(N, H, roughness);
+	float G = geometrySmith(N, V, L, roughness);
+	float denom = 4.0 * NdotL * NdotV + EPSILON;
+	return (F * D * G) / denom;
+}
+
 \phong.fs
 
 #version 330 core
 
 #include "perturbNormal"
+#include "PBR_functions"
 
 // Varyings: datos que llegan del vertex shader (basic.vs)
 in vec3 v_position;
@@ -80,6 +149,10 @@ uniform mat4 u_shadow_vps[MAX_LIGHTS];
 uniform sampler2D u_normal_texture;
 uniform int u_has_normal_texture;
 uniform int u_show_normals;
+uniform sampler2D u_metallic_roughness_texture;
+uniform int u_has_metallic_roughness_texture;
+uniform float u_roughness_factor;
+uniform float u_metallic_factor;
 
 out vec4 FragColor;
 
@@ -111,7 +184,7 @@ float testShadow(vec3 world_pos, int index) {
 
 // --- FUNCIÃ“N DE CÃLCULO DE LUZ INDIVIDUAL ---
 // --- FUNCIÃ“N DE CÃLCULO DE LUZ INDIVIDUAL ---
-vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
+vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color, float roughness, float metalness) {
     vec3 L;
     float attenuation;
 
@@ -148,28 +221,16 @@ vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color) {
         }
     }
 
-    // --- CÃLCULO DE SOMBRA ---
 	float shadow_factor = 1.0;
-    // Evitamos calcular sombras para luces puntuales (tipo 1)
-    if (u_has_shadow_map == 1 && u_light_types[index] != 1) {
-        shadow_factor = testShadow(world_pos, index);
-    }
+	if (u_has_shadow_map == 1 && u_light_types[index] != 1) {
+		shadow_factor = testShadow(world_pos, index);
+	}
 
     vec3 light_intensity = u_light_colors[index] * attenuation * shadow_factor;
-    
-    // Declaramos la variable que se habÃ­a borrado
-    vec3 result_color = vec3(0.0);
-
-    // Diffuse
-    float NdotL = clamp(dot(N, L), 0.0, 1.0);
-    result_color += base_color * NdotL * light_intensity;
-
-    // Specular
-    vec3 R = reflect(-L, N);
-    float RdotV = clamp(dot(R, V), 0.0, 1.0);
-    result_color += base_color * pow(RdotV, u_shininess) * light_intensity;
-
-    return result_color;
+    float NdotL = saturate(dot(N, L));
+    vec3 diffuse_brdf = cookTorranceDiffuseBRDF(base_color, metalness);
+    vec3 specular_brdf = cookTorranceSpecularBRDF(N, V, L, base_color, metalness, roughness);
+    return (diffuse_brdf + specular_brdf) * light_intensity * NdotL;
 }
 
 void main()
@@ -197,16 +258,25 @@ void main()
 	}
 
 	vec3 V = normalize(u_camera_position - v_world_position);
+	float roughness = u_roughness_factor;
+	float metalness = u_metallic_factor;
+	if (u_has_metallic_roughness_texture == 1) {
+		vec3 metallic_roughness = texture(u_metallic_roughness_texture, uv).rgb;
+		roughness *= metallic_roughness.g;
+		metalness *= metallic_roughness.b;
+	}
+	roughness = clamp(roughness, 0.0, 1.0);
+	metalness = clamp(metalness, 0.0, 1.0);
 
 	vec3 out_color = vec3(0.0);
 
 	// Ambient: una sola vez
-	out_color += u_ambient_light * base_color;
+	out_color += u_ambient_light * cookTorranceDiffuseBRDF(base_color, metalness);
 
 	// Iterar luces
 	for (int i = 0; i < MAX_LIGHTS; i++) {
 		if (i < u_num_lights) {
-			out_color += computeLight(i, v_world_position, N, V, base_color);
+			out_color += computeLight(i, v_world_position, N, V, base_color, roughness, metalness);
 		}
 	}
 
@@ -418,6 +488,10 @@ uniform float u_alpha_cutoff;
 uniform sampler2D u_normal_texture;
 uniform int u_has_normal_texture;
 uniform int u_show_normals;
+uniform sampler2D u_metallic_roughness_texture;
+uniform int u_has_metallic_roughness_texture;
+uniform float u_roughness_factor;
+uniform float u_metallic_factor;
 
 // TAREA 2.2: Declarar las salidas a mÃºltiples texturas[cite: 1]
 layout(location = 0) out vec4 gbuffer_albedo;
@@ -441,12 +515,20 @@ void main()
         N = perturbNormal(N, v_world_position, v_uv, normal_pixel);
     }
 
+    float roughness = u_roughness_factor;
+    float metalness = u_metallic_factor;
+    if (u_has_metallic_roughness_texture == 1) {
+        vec3 metallic_roughness = texture(u_metallic_roughness_texture, v_uv).rgb;
+        roughness *= metallic_roughness.g;
+        metalness *= metallic_roughness.b;
+    }
+    roughness = clamp(roughness, 0.0, 1.0);
+    metalness = clamp(metalness, 0.0, 1.0);
     // 3. Escribir en el G-Buffer
-    gbuffer_albedo = vec4(color.rgb, 1.0);
-    
+    gbuffer_albedo = vec4(color.rgb, roughness);
     // IMPORTANTE: Las normales van de -1 a 1, pero la textura guarda valores de 0 a 1.[cite: 1]
     // Hay que empaquetarlas:
-    gbuffer_normal = vec4(N * 0.5 + 0.5, 1.0); 
+    gbuffer_normal = vec4(N * 0.5 + 0.5, metalness);
 }
 
 \deferred_global.fs
@@ -454,6 +536,8 @@ void main()
 #version 330 core
 
 in vec2 v_uv;
+
+#include "PBR_functions"
 
 uniform sampler2D u_albedo_texture;
 uniform sampler2D u_normal_texture;
@@ -495,8 +579,12 @@ void main()
     vec2 uv = gl_FragCoord.xy * u_iRes;
     
     // Read G-Buffer
-    vec3 albedo = texture(u_albedo_texture, uv).rgb;
-    vec3 N = texture(u_normal_texture, uv).rgb * 2.0 - 1.0;
+    vec4 albedo_data = texture(u_albedo_texture, uv);
+    vec4 normal_data = texture(u_normal_texture, uv);
+    vec3 albedo = albedo_data.rgb;
+    vec3 N = normal_data.rgb * 2.0 - 1.0;
+    float roughness = clamp(albedo_data.a, 0.0, 1.0);
+    float metalness = clamp(normal_data.a, 0.0, 1.0);
     N = normalize(N);
     float depth = texture(u_depth_texture, uv).x;
     
@@ -514,8 +602,7 @@ void main()
     
     vec3 V = normalize(u_camera_position - world_pos);
     
-    // Start with ambient
-    vec3 out_color = u_ambient_light * albedo;
+    vec3 out_color = u_ambient_light * cookTorranceDiffuseBRDF(albedo, metalness);
     
     // Add directional lights
     for (int i = 0; i < MAX_LIGHTS; i++) {
@@ -530,14 +617,10 @@ void main()
             shadow = testShadow(world_pos);
         }
         
-        // Diffuse
-        float NdotL = clamp(dot(N, L), 0.0, 1.0);
-        out_color += albedo * NdotL * light_color * shadow;
-        
-        // Specular
-        vec3 R = reflect(-L, N);
-        float RdotV = clamp(dot(R, V), 0.0, 1.0);
-        out_color += albedo * pow(RdotV, u_shininess) * light_color * shadow;
+        float NdotL = saturate(dot(N, L));
+        vec3 diffuse_brdf = cookTorranceDiffuseBRDF(albedo, metalness);
+        vec3 specular_brdf = cookTorranceSpecularBRDF(N, V, L, albedo, metalness, roughness);
+        out_color += (diffuse_brdf + specular_brdf) * light_color * shadow * NdotL;
     }
     
     FragColor = vec4(out_color, 1.0);
@@ -552,6 +635,8 @@ in vec3 v_position;
 in vec3 v_world_position;
 in vec3 v_normal;
 in vec2 v_uv;
+
+#include "PBR_functions"
 
 uniform sampler2D u_albedo_texture;
 uniform sampler2D u_normal_texture;
@@ -584,8 +669,12 @@ void main()
     vec2 uv = gl_FragCoord.xy * u_iRes;
     
     // Read G-Buffer
-    vec3 albedo = texture(u_albedo_texture, uv).rgb;
-    vec3 N = texture(u_normal_texture, uv).rgb * 2.0 - 1.0;
+    vec4 albedo_data = texture(u_albedo_texture, uv);
+    vec4 normal_data = texture(u_normal_texture, uv);
+    vec3 albedo = albedo_data.rgb;
+    vec3 N = normal_data.rgb * 2.0 - 1.0;
+    float roughness = clamp(albedo_data.a, 0.0, 1.0);
+    float metalness = clamp(normal_data.a, 0.0, 1.0);
     N = normalize(N);
     float depth = texture(u_depth_texture, uv).x;
     
@@ -654,17 +743,11 @@ void main()
     
     vec3 light_intensity = u_light_color * attenuation * shadow;
     
-    // NO ambient here! Only diffuse + specular
     vec3 result = vec3(0.0);
-    
-    // Diffuse
-    float NdotL = clamp(dot(N, L), 0.0, 1.0);
-    result += albedo * NdotL * light_intensity;
-    
-    // Specular
-    vec3 R = reflect(-L, N);
-    float RdotV = clamp(dot(R, V), 0.0, 1.0);
-    result += albedo * pow(RdotV, u_shininess) * light_intensity;
+    float NdotL = saturate(dot(N, L));
+    vec3 diffuse_brdf = cookTorranceDiffuseBRDF(albedo, metalness);
+    vec3 specular_brdf = cookTorranceSpecularBRDF(N, V, L, albedo, metalness, roughness);
+    result += (diffuse_brdf + specular_brdf) * light_intensity * NdotL;
     
     FragColor = vec4(result, 1.0);
 }

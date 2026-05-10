@@ -82,6 +82,7 @@ void Material::bind(GFX::Shader* shader) {
 	{
 		GFX::Texture* texture = textures[SCN::eTextureChannel::ALBEDO].texture;
 		GFX::Texture* normal_texture = textures[SCN::eTextureChannel::NORMALMAP].texture;
+		GFX::Texture* metallic_roughness_texture = textures[SCN::eTextureChannel::METALLIC_ROUGHNESS].texture;
 
 		// We always force a default albedo texture
 		if (texture == NULL)
@@ -98,6 +99,17 @@ void Material::bind(GFX::Shader* shader) {
 		} else {
 			shader->setUniform("u_has_normal_texture", 0);
 		}
+
+		if (metallic_roughness_texture) {
+			shader->setUniform("u_metallic_roughness_texture", metallic_roughness_texture, 2);
+			shader->setUniform("u_has_metallic_roughness_texture", 1);
+		}
+		else {
+			shader->setUniform("u_has_metallic_roughness_texture", 0);
+		}
+
+		shader->setUniform("u_roughness_factor", roughness_factor);
+		shader->setUniform("u_metallic_factor", metallic_factor);
 
 		// This is used to say which is the alpha threshold to what we should not paint a pixel on the screen (to cut polygons according to texture alpha)
 		shader->setUniform("u_alpha_cutoff", alpha_mode == SCN::eAlphaMode::MASK ? alpha_cutoff : 0.001f);
