@@ -8,6 +8,7 @@ depth_write quad.vs depth_write.fs
 gbuffer basic.vs gbuffer.fs
 deferred_global quad.vs deferred_global.fs
 deferred_light basic.vs deferred_light.fs
+ssao quad.vs ssao.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -562,6 +563,10 @@ uniform float u_shadow_bias;
 uniform sampler2D u_shadow_map;
 uniform mat4 u_shadow_vp;
 
+// SSAO
+uniform sampler2D u_ssao_texture;
+uniform int u_enable_ssao;
+
 out vec4 FragColor;
 
 float testShadow(vec3 world_pos) {
@@ -603,7 +608,14 @@ void main()
     
     vec3 V = normalize(u_camera_position - world_pos);
     
-    vec3 out_color = u_ambient_light * cookTorranceDiffuseBRDF(albedo, metalness);
+    // Leer SSAO: si está activado, atenúa la luz ambiental. Si no, factor = 1.0 (sin efecto)
+    float ao_factor = 1.0;
+    if (u_enable_ssao == 1) {
+        ao_factor = texture(u_ssao_texture, uv).r;
+    }
+    
+    // REGLA CLAVE: Solo la luz ambiental se multiplica por el SSAO
+    vec3 out_color = u_ambient_light * cookTorranceDiffuseBRDF(albedo, metalness) * ao_factor;
     
     // Add directional lights
     for (int i = 0; i < MAX_LIGHTS; i++) {
@@ -764,4 +776,117 @@ out vec4 FragColor;
 void main() {
     gl_FragDepth = texture(u_depth_texture, v_uv).x;
     FragColor = vec4(0.0);
+}
+
+\ssao.fs
+
+#version 330 core
+
+in vec2 v_uv;
+
+// --- Uniforms enviados desde la CPU (Fase 2) ---
+uniform sampler2D u_depth_texture;   // Profundidad del G-Buffer
+uniform sampler2D u_normal_texture;  // Normales del G-Buffer (empaquetadas 0-1)
+
+uniform mat4 u_p_mat;       // Projection Matrix
+uniform mat4 u_inv_p_mat;   // Inverse Projection Matrix
+uniform mat4 u_view_mat;    // View Matrix (para normales World→View)
+
+uniform int u_sample_count;          // Nº de muestras
+uniform float u_sample_radius;       // Radio de búsqueda
+uniform vec2 u_res_inv;              // 1.0 / resolución del FBO
+uniform vec3 u_sample_pos[64];       // Puntos de muestreo precalculados (máx 64)
+
+out vec4 FragColor;
+
+void main()
+{
+    // =============================================
+    // PASO 1: Reconstruir la posición 3D en View Space
+    // =============================================
+
+    // Centrar la UV en el medio del píxel (evitar artefactos de precisión)
+    vec2 uv = v_uv + 0.5 * u_res_inv;
+
+    // Leer profundidad del G-Buffer (rango 0-1)
+    float depth = texture(u_depth_texture, uv).r;
+
+    // Early exit: si depth == 1.0, es el cielo (no hay geometría)
+    if (depth >= 1.0) {
+        FragColor = vec4(1.0); // Blanco = sin oclusión
+        return;
+    }
+
+    // Transformar UV + depth a Clip Space (NDC): de [0,1] a [-1,1]
+    vec4 clip_coords = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+
+    // Invertir la proyección: Clip Space → View Space
+    vec4 view_pos = u_inv_p_mat * clip_coords;
+    view_pos /= view_pos.w;  // División de perspectiva
+
+    // =============================================
+    // PASO 2: Preparar la Normal y la Matriz TBN
+    // =============================================
+
+    // Leer normal del G-Buffer (empaquetada en 0-1) y desempaquetar a -1..1
+    vec3 N = texture(u_normal_texture, uv).rgb * 2.0 - 1.0;
+    N = normalize(N);
+
+    // Las normales del G-Buffer están en World Space.
+    // Multiplicamos por View Matrix (w=0.0 para ignorar traslación) → View Space
+    N = normalize((u_view_mat * vec4(N, 0.0)).xyz);
+
+    // Construir la matriz TBN para orientar el hemisferio hacia la normal
+    // Usamos un vector pseudo-aleatorio fijo (se puede mejorar con una textura de ruido)
+    vec3 v_rand = vec3(0.0, 1.0, 0.0);
+
+    // Gram-Schmidt: calcular Tangente ortogonal a N
+    vec3 T = normalize(v_rand - N * dot(v_rand, N));
+    vec3 B = cross(N, T);
+
+    // La matriz que rota nuestro hemisferio "hacia arriba" para que apunte hacia N
+    mat3 rotmat = mat3(T, B, N);
+
+    // =============================================
+    // PASO 3: Evaluar las muestras (bucle principal)
+    // =============================================
+
+    float ao_term = 0.0;
+
+    for (int i = 0; i < u_sample_count; i++) {
+
+        // a) Rotar la muestra con la TBN (alinear hemisferio a la superficie)
+        vec3 view_sample = rotmat * u_sample_pos[i];
+
+        // b) Escalar por el radio y mover al punto de origen
+        view_sample = view_sample * u_sample_radius + view_pos.xyz;
+
+        // c) Proyectar la muestra 3D de vuelta a 2D (View Space → Clip Space)
+        vec4 proj_sample = u_p_mat * vec4(view_sample, 1.0);
+        proj_sample /= proj_sample.w;  // División de perspectiva
+
+        // d) Pasar de Clip Space [-1,1] a coordenadas UV [0,1]
+        vec2 sample_uv = proj_sample.xy * 0.5 + 0.5;
+
+        // e) Leer la profundidad real de la escena en esa posición
+        float sample_depth = texture(u_depth_texture, sample_uv).r;
+
+        // f) Reconstruir la Z real de la escena en View Space para comparar
+        //    Convertimos sample_depth (0-1) a clip Z (-1..1), luego a View Space
+        vec4 real_clip = vec4(0.0, 0.0, sample_depth * 2.0 - 1.0, 1.0);
+        vec4 real_view = u_inv_p_mat * real_clip;
+        real_view /= real_view.w;
+
+        // g) Comparar: si la geometría real está MÁS CERCA que nuestra muestra,
+        //    la muestra está ocluida (enterrada dentro de la geometría)
+        //    En View Space de OpenGL, los objetos más cercanos tienen Z más grande (menos negativo)
+        if (real_view.z > view_sample.z) {
+            ao_term += 1.0;
+        }
+    }
+
+    // Promediar: ao_term ahora contiene la fracción de muestras NO ocluidas
+    ao_term = 1.0 - (ao_term / float(u_sample_count));
+
+    FragColor = vec4(vec3(ao_term), 1.0);
 }

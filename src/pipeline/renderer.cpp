@@ -367,6 +367,63 @@ void Renderer::renderForward(Camera* camera) {
 }
 
 void Renderer::renderDeferred(Camera* camera) {
+
+	// ==========================================
+	// ASSIGNMENT 6: PASE DE SSAO
+	// ==========================================
+	if (enable_ssao && !ssao_sample_points.empty()) {
+		ssao_fbo->bind();
+
+		// Limpiar a blanco (1.0 = sin oclusión). Si un píxel no se procesa, no tendrá sombra.
+		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_BLEND);
+
+		GFX::Shader* ao_shader = GFX::Shader::Get("ssao");
+		if (ao_shader) {
+			ao_shader->enable();
+
+			// --- Matrices de cámara ---
+			// Projection: para proyectar muestras 3D → coordenadas de pantalla 2D
+			Matrix44 proj = camera->projection_matrix;
+			ao_shader->setUniform("u_p_mat", proj);
+
+			// Inverse Projection: para reconstruir posición 3D desde la profundidad 2D
+			Matrix44 proj_inv = proj;
+			proj_inv.inverse();
+			ao_shader->setUniform("u_inv_p_mat", proj_inv);
+
+			// View Matrix: para transformar normales de World Space → View Space
+			ao_shader->setUniform("u_view_mat", camera->view_matrix);
+
+			// --- Parámetros del SSAO ---
+			ao_shader->setUniform1("u_sample_count", ssao_num_samples);
+			ao_shader->setUniform("u_sample_radius", ssao_radius);
+
+			// Resolución inversa: para centrar las UVs al centro exacto del píxel
+			float inv_w = 1.0f / (float)ssao_fbo->color_textures[0]->width;
+			float inv_h = 1.0f / (float)ssao_fbo->color_textures[0]->height;
+			ao_shader->setUniform("u_res_inv", vec2(inv_w, inv_h));
+
+			// Array de puntos de muestreo (precalculados en la CPU)
+			ao_shader->setUniform3Array("u_sample_pos",
+				(float*)&ssao_sample_points[0], ssao_num_samples);
+
+			// --- Texturas del G-Buffer ---
+			ao_shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 7);
+			ao_shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 8);
+
+			// Dibujar quad a pantalla completa → ejecuta el fragment shader 1 vez por píxel
+			GFX::Mesh* quad = GFX::Mesh::getQuad();
+			quad->render(GL_TRIANGLES);
+
+			ao_shader->disable();
+		}
+
+		ssao_fbo->unbind();
+	}
+
 	// ==========================================
 	// ASSIGNMENT 4: TAREA 2.4.1 Y 2.4.2: PRIMERA PASADA
 	// ==========================================
@@ -401,6 +458,10 @@ void Renderer::renderDeferred(Camera* camera) {
 	global_shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
 	global_shader->setUniform("u_iRes", vec2(1.0f / (float)illumination_fbo->width, 1.0f / (float)illumination_fbo->height));
 	global_shader->setUniform("u_shininess", 32.0f);
+
+	// SSAO: enviar la textura de oclusión al shader de iluminación
+	global_shader->setUniform("u_ssao_texture", ssao_fbo->color_textures[0], 4);
+	global_shader->setUniform1("u_enable_ssao", enable_ssao ? 1 : 0);
 
 	// Filtrar y enviar luces direccionales
 	vec3 dir_light_colors[MAX_LIGHTS];
