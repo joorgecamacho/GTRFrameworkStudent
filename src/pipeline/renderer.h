@@ -48,6 +48,14 @@ namespace SCN {
 		GFX::FBO* gbuffer_fbo = nullptr;
 		GFX::FBO* illumination_fbo = nullptr; // FBO para la iluminación final (paso 2.4.1)
 
+		// === SSAO ===
+		GFX::FBO* ssao_fbo = nullptr;
+		bool enable_ssao = true;
+		bool ssao_hemisphere = true; // true = SSAO+ (hemisferio), false = SSAO básico (esfera)
+		int ssao_num_samples = 32;   // Nº de muestras (recomendado 15-64)
+		float ssao_radius = 0.05f;   // Radio de búsqueda de oclusores
+		std::vector<Vector3f> ssao_sample_points; // Puntos de muestreo precalculados (radio 1.0)
+
 		SCN::Scene* scene;
 
 		//updated every frame

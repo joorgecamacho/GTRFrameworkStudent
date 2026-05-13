@@ -43,6 +43,9 @@ Renderer::Renderer(const char* shader_atlas_filename)
 
 	sphere.createSphere(1.0f);
 	sphere.uploadToVRAM();
+
+	// SSAO: generar puntos de muestreo una sola vez (radio 1.0, se escala en el shader)
+	ssao_sample_points = generateSpherePoints(ssao_num_samples, 1.0f, ssao_hemisphere);
 }
 
 void Renderer::setupScene()
@@ -137,6 +140,13 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 		if (illumination_fbo) delete illumination_fbo;
 		illumination_fbo = new GFX::FBO();
 		illumination_fbo->create(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE, true);
+	}
+
+	// SSAO FBO: 1 textura de color (escala de grises), sin depth buffer (es post-proceso 2D)
+	if (ssao_fbo == nullptr || ssao_fbo->color_textures[0]->width != width || ssao_fbo->color_textures[0]->height != height) {
+		if (ssao_fbo) delete ssao_fbo;
+		ssao_fbo = new GFX::FBO();
+		ssao_fbo->create(width, height, 1, GL_RGB, GL_UNSIGNED_BYTE, false);
 	}
 
 	generateShadowMap();
@@ -605,6 +615,21 @@ void Renderer::showUI()
 	ImGui::Checkbox("Single Pass", &single_pass);
 	ImGui::Checkbox("Use Deferred", &use_deferred);
 
+	// === SSAO Controls ===
+	if (ImGui::TreeNode("SSAO")) {
+		ImGui::Checkbox("Enable SSAO", &enable_ssao);
+
+		// Si cambian las muestras o el modo hemisferio, regeneramos los puntos
+		bool changed = false;
+		changed |= ImGui::SliderInt("Samples", &ssao_num_samples, 1, 64);
+		changed |= ImGui::Checkbox("Hemisphere (SSAO+)", &ssao_hemisphere);
+		if (changed) {
+			ssao_sample_points = generateSpherePoints(ssao_num_samples, 1.0f, ssao_hemisphere);
+		}
+
+		ImGui::SliderFloat("Radius", &ssao_radius, 0.001f, 0.2f);
+		ImGui::TreePop();
+	}
 
 	//add here your stuff
 	//...

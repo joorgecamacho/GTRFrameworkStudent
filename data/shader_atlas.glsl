@@ -26,6 +26,7 @@ mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
 	vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
 
 	// construct a scale-invariant frame 
+
 	float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
 	return mat3(T * invmax, B * invmax, N);
 }
