@@ -139,7 +139,7 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	if (illumination_fbo == nullptr || illumination_fbo->color_textures[0]->width != width || illumination_fbo->color_textures[0]->height != height) {
 		if (illumination_fbo) delete illumination_fbo;
 		illumination_fbo = new GFX::FBO();
-		illumination_fbo->create(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE, true);
+		illumination_fbo->create(width, height, 1, GL_RGBA, GL_HALF_FLOAT, true);//3.2 HDR: half-float
 	}
 
 	// SSAO FBO: 1 textura de color (escala de grises), sin depth buffer (es post-proceso 2D)
@@ -157,7 +157,7 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		GFX::checkGLErrors();
 		if (skybox_cubemap)
-			renderSkybox(skybox_cubemap);
+			renderSkybox(skybox_cubemap, false);
 		for (int i = 0; i < render_list.size(); i++) {
 			if (render_list[i].material->alpha_mode == SCN::eAlphaMode::BLEND)
 				continue;
@@ -174,7 +174,7 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 
 
 
-void Renderer::renderSkybox(GFX::Texture* cubemap)
+void Renderer::renderSkybox(GFX::Texture* cubemap, bool apply_gamma)
 {
 	Camera* camera = Camera::current;
 
@@ -204,6 +204,7 @@ void Renderer::renderSkybox(GFX::Texture* cubemap)
 	shader->setUniform("u_camera_position", camera->eye);
 
 	shader->setUniform("u_texture", cubemap, 0);
+	shader->setUniform("u_apply_gamma", apply_gamma ? 1 : 0);
 
 	sphere.render(GL_TRIANGLES);
 
@@ -359,7 +360,7 @@ void Renderer::renderForward(Camera* camera) {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	if (skybox_cubemap)
-		renderSkybox(skybox_cubemap);
+		renderSkybox(skybox_cubemap, true);
 
 	for (int i = 0; i < render_list.size(); i++) {
 		renderMeshWithMaterialForward(render_list[i].matrix, render_list[i].mesh, render_list[i].material);
@@ -571,10 +572,15 @@ void Renderer::renderDeferred(Camera* camera) {
 	// ASSIGNMENT 4: TAREA 2.4 (FINAL): RENDER FORWARD DE TRANSPARENCIAS
 	// ==========================================
 
-	// 1. Copiar Illumination a pantalla (solo opacos iluminados)
+	// 1. Tonemap HDR + gamma a pantalla (3.3)
 	glClearColor(0.0, 0.0, 0.0, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	illumination_fbo->color_textures[0]->toViewport();
+	GFX::Shader* tonemap_shader = GFX::Shader::Get("tonemap");
+	if (tonemap_shader) {
+		tonemap_shader->enable();
+		tonemap_shader->setUniform("u_exposure", tonemap_exposure);
+		illumination_fbo->color_textures[0]->toViewport(tonemap_shader);
+	}
 	
 	// 2. Copiamos la profundidad usando un shader en lugar de glBlitFramebuffer
 	// ya que el glBlitFramebuffer al FBO por defecto (0) falla por incompatibilidad
@@ -692,8 +698,10 @@ void Renderer::showUI()
 		ImGui::TreePop();
 	}
 
-	//add here your stuff
-	//...
+	if (ImGui::TreeNode("HDR / Tonemap")) {
+		ImGui::SliderFloat("Exposure", &tonemap_exposure, 0.1f, 8.0f);
+		ImGui::TreePop();
+	}
 }
 
 #else

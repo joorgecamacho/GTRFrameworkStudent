@@ -9,6 +9,7 @@ gbuffer basic.vs gbuffer.fs
 deferred_global quad.vs deferred_global.fs
 deferred_light basic.vs deferred_light.fs
 ssao quad.vs ssao.fs
+tonemap quad.vs tonemap.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -41,6 +42,18 @@ vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
 }
 
 \PBR_functions
+
+const float GAMMA = 2.2;
+
+vec3 degamma(vec3 c)
+{
+	return pow(max(c, vec3(0.0)), vec3(GAMMA));
+}
+
+vec3 gamma(vec3 c)
+{
+	return pow(max(c, vec3(0.0)), vec3(1.0 / GAMMA));
+}
 
 const float PI = 3.14159265359;
 const float EPSILON = 0.0001;
@@ -228,7 +241,7 @@ vec3 computeLight(int index, vec3 world_pos, vec3 N, vec3 V, vec3 base_color, fl
 		shadow_factor = testShadow(world_pos, index);
 	}
 
-    vec3 light_intensity = u_light_colors[index] * attenuation * shadow_factor;
+    vec3 light_intensity = degamma(u_light_colors[index]) * attenuation * shadow_factor;
     float NdotL = saturate(dot(N, L));
     vec3 diffuse_brdf = cookTorranceDiffuseBRDF(base_color, metalness);
     vec3 specular_brdf = cookTorranceSpecularBRDF(N, V, L, base_color, metalness, roughness);
@@ -245,7 +258,7 @@ void main()
 	if(color.a < u_alpha_cutoff)
 		discard;
 
-	vec3 base_color = color.rgb;
+	vec3 base_color = degamma(color.rgb);
 
 	// 2. Normal Mapping
 	vec3 N = normalize(v_normal);
@@ -273,7 +286,7 @@ void main()
 	vec3 out_color = vec3(0.0);
 
 	// Ambient: una sola vez
-	out_color += u_ambient_light * cookTorranceDiffuseBRDF(base_color, metalness);
+	out_color += degamma(u_ambient_light) * cookTorranceDiffuseBRDF(base_color, metalness);
 
 	// Iterar luces
 	for (int i = 0; i < MAX_LIGHTS; i++) {
@@ -282,8 +295,8 @@ void main()
 		}
 	}
 
-	// Output final
-	FragColor = vec4(out_color, color.a);
+	// Output final (linear -> gamma para pantalla)
+	FragColor = vec4(gamma(out_color), color.a);
 }
 
 
@@ -396,8 +409,11 @@ void main()
 in vec3 v_position;
 in vec3 v_world_position;
 
+#include "PBR_functions"
+
 uniform samplerCube u_texture;
 uniform vec3 u_camera_position;
+uniform int u_apply_gamma;
 
 // Salidas mÃºltiples
 layout(location = 0) out vec4 gbuffer_albedo;
@@ -407,8 +423,11 @@ void main()
 {
 	vec3 E = v_world_position - u_camera_position;
 	vec4 color = texture( u_texture, E );
-	
-    gbuffer_albedo = color;
+	vec3 rgb = color.rgb;
+	if (u_apply_gamma == 1)
+		rgb = gamma(rgb);
+
+    gbuffer_albedo = vec4(rgb, color.a);
     // El skybox no tiene normales reales que afecten a la luz, 
     // pero debemos escribir algo en el canal de normales para que la textura no quede con basura.
     gbuffer_normal = vec4(0.5, 0.5, 0.5, 1.0); // Una normal "nula" en rango empaquetado 0-1
@@ -476,6 +495,7 @@ void main()
 #version 330 core
 
 #include "perturbNormal"
+#include "PBR_functions"
 
 in vec3 v_position;
 in vec3 v_world_position;
@@ -501,8 +521,9 @@ layout(location = 1) out vec4 gbuffer_normal;
 
 void main()
 {
-    // 1. Color base
+    // 1. Color base (perceptual -> linear para iluminación)
     vec4 color = u_color * texture(u_texture, v_uv);
+    color.rgb = degamma(color.rgb);
 
     // Alpha masking para materiales tipo MASK (hojas, rejas, etc.)
     if(color.a < u_alpha_cutoff) {
@@ -615,14 +636,14 @@ void main()
     }
     
     // REGLA CLAVE: Solo la luz ambiental se multiplica por el SSAO
-    vec3 out_color = u_ambient_light * cookTorranceDiffuseBRDF(albedo, metalness) * ao_factor;
+    vec3 out_color = degamma(u_ambient_light) * cookTorranceDiffuseBRDF(albedo, metalness) * ao_factor;
     
     // Add directional lights
     for (int i = 0; i < MAX_LIGHTS; i++) {
         if (i >= u_num_dir_lights) break;
         
         vec3 L = normalize(-u_dir_light_direction[i]);
-        vec3 light_color = u_dir_light_color[i];
+        vec3 light_color = degamma(u_dir_light_color[i]);
         
         // Shadow
         float shadow = 1.0;
@@ -754,7 +775,7 @@ void main()
         }
     }
     
-    vec3 light_intensity = u_light_color * attenuation * shadow;
+    vec3 light_intensity = degamma(u_light_color) * attenuation * shadow;
     
     vec3 result = vec3(0.0);
     float NdotL = saturate(dot(N, L));
@@ -763,6 +784,43 @@ void main()
     result += (diffuse_brdf + specular_brdf) * light_intensity * NdotL;
     
     FragColor = vec4(result, 1.0);
+}
+
+\tonemap.fs
+
+#version 330 core
+
+in vec2 v_uv;
+
+#include "PBR_functions"
+
+uniform sampler2D u_texture;
+uniform float u_exposure;
+
+out vec4 FragColor;
+
+//tonemapper Uncharted 2 (Naughty Dog)
+const float TONEMAP_A = 0.15;
+const float TONEMAP_B = 0.50;
+const float TONEMAP_C = 0.10;
+const float TONEMAP_D = 0.20;
+const float TONEMAP_E = 0.02;
+const float TONEMAP_F = 0.30;
+const float TONEMAP_WHITE = 11.2;
+
+vec3 Uncharted2TonemapPartial(vec3 x)
+{
+	return ((x * (TONEMAP_A * x + TONEMAP_C * TONEMAP_B) + TONEMAP_D * TONEMAP_E)
+		/ (x * (TONEMAP_A * x + TONEMAP_B) + TONEMAP_D * TONEMAP_F)) - TONEMAP_E / TONEMAP_F;
+}
+
+void main()
+{
+	vec3 hdr_color = texture(u_texture, v_uv).rgb;
+	vec3 mapped = Uncharted2TonemapPartial(hdr_color * u_exposure);
+	vec3 white_scale = vec3(1.0) / Uncharted2TonemapPartial(vec3(TONEMAP_WHITE));
+	vec3 tonemapped = mapped * white_scale;
+	FragColor = vec4(gamma(tonemapped), 1.0);
 }
 
 \depth_write.fs

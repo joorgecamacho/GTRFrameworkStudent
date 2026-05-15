@@ -46,7 +46,9 @@ namespace SCN {
 		GFX::Texture* skybox_cubemap;
 
 		GFX::FBO* gbuffer_fbo = nullptr;
-		GFX::FBO* illumination_fbo = nullptr; // FBO para la iluminación final (paso 2.4.1)
+		GFX::FBO* illumination_fbo = nullptr; // HDR RGBA16F (3.2)
+
+		float tonemap_exposure = 2.0f; // Exposición previa al tonemap Uncharted 2 (3.3)
 
 		// === SSAO ===
 		GFX::FBO* ssao_fbo = nullptr;
@@ -74,7 +76,7 @@ namespace SCN {
 		void renderScene(SCN::Scene* scene, Camera* camera);
 
 		//render the skybox
-		void renderSkybox(GFX::Texture* cubemap);
+		void renderSkybox(GFX::Texture* cubemap, bool apply_gamma = false);
 
 		//to render one mesh given its material and transformation matrix
 		void renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
