@@ -1,0 +1,55 @@
+Team Members:
+- Jorge Camacho (NIA: 266986)
+- Ivan Torres (NIA: 286568)
+
+--------------------------------------------------------------------------------
+Assignment 3: Implementing a Deferred Renderer
+--------------------------------------------------------------------------------
+
+COMPLETED EXERCISES:
+- 2.1 Generate the G-Buffer
+- 2.2 Filling the G-Buffer with Opaque Geometry
+- 2.3 Single pass deferred rendering
+- 2.4 Light volumes
+- 2.4 Handling transparencies
+- 2.5 ImGUI controls
+
+INCOMPLETE EXERCISES (AND WHY):
+- 2.5 EXTRA (Better deferred transparencies): Not implemented. We kept using standard forward rendering instead of dithering/checkerboarding as it already yielded correct visual results and we wanted to prioritize the core deferred pipeline.
+- 2.6 EXTRA (Cone shaped light volume): Not implemented. We used sphere meshes for both point and spot lights to simplify the geometry loading and matrix scaling process.
+- 2.7 EXTRA (Saving one extra channel): Not implemented. We stored normals using 3 channels (XYZ) rather than reconstructing Z from XY, to avoid decoding overhead in the shaders.
+
+--------------------------------------------------------------------------------
+Assignment 5: Implementing Physically Based Shading
+--------------------------------------------------------------------------------
+
+COMPLETED EXERCISES:
+- 2.1 Loading the new material data
+- 2.2 Programming the BRDF
+- 2.3 Extending it to deferred
+
+INCOMPLETE EXERCISES (AND WHY):
+- 2.5 EXTRA (PBR with IBL and Evaluation): Not implemented. We skipped Image-Based Lighting via environment maps due to time constraints, so our ambient lighting relies on a constant ambient term.
+
+--------------------------------------------------------------------------------
+Assignment 6: Implementing Screen Space Ambient Occlusion and HDR Tone Mapping
+--------------------------------------------------------------------------------
+
+COMPLETED EXERCISES:
+- 2.1 Prepare the SSAO
+- 2.2 Creating the sampling points
+- 2.3 Crysis 2’s SSAO & 2.4 SSAO+
+- 2.5 Applying the AO texture to our render
+- 3.1 Apply Linear and Gamma space
+- 3.2 Rendering in HDR
+- 3.3 Apply a tonemapper
+
+INCOMPLETE EXERCISES (AND WHY):
+- 2.6 EXTRA (Enhancing SSAO performance): Not implemented. We did not add an extra blur pass due to time limitations, so the raw SSAO map is used directly.
+- 2.7 EXTRA (Expanding the SSAO with the baked AO): Not implemented. We chose not to sample the baked AO from the materials to combine it with the screen-space AO to keep the shader simple.
+- 2.8 EXTRA (Range checking): Not implemented. We did not linearize the depths to check the distance between samples, prioritizing the core SSAO+ implementation instead.
+
+--------------------------------------------------------------------------------
+Highlight:
+--------------------------------------------------------------------------------
+We are particularly proud of our Hemispheric Screen Space Ambient Occlusion (SSAO+) implementation. We successfully integrated the TBN matrix computation directly in the fragment shader to align the sampling hemisphere with the surface normal. This completely eliminated the incorrect self-occlusion artifacts of standard SSAO, producing clean and highly realistic contact shadows that greatly improved the overall visual quality of our scene.

@@ -266,7 +266,7 @@ void Renderer::renderPlain(const Matrix44 model, GFX::Mesh* mesh, SCN::Material*
 
 	// Si el material tiene recortes (hojas de árbol, vallas...), necesitamos evaluar la textura
 	if (material->alpha_mode == SCN::eAlphaMode::MASK) {
-		shader = GFX::Shader::Get("texture"); // Usamos tu shader 'texture' que ya tiene el discard
+		shader = GFX::Shader::Get("texture"); // Usamos shader 'texture' que ya tiene el discard
 		if (!shader) return;
 
 		shader->enable();
@@ -569,7 +569,7 @@ void Renderer::renderDeferred(Camera* camera) {
 	illumination_fbo->unbind();
 
 	// ==========================================
-	// ASSIGNMENT 4: TAREA 2.4 (FINAL): RENDER FORWARD DE TRANSPARENCIAS
+	//RENDER FORWARD DE TRANSPARENCIAS
 	// ==========================================
 
 	// 1. Tonemap HDR + gamma a pantalla (3.3)
