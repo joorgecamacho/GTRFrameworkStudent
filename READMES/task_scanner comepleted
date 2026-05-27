@@ -1,0 +1,22 @@
+# Tareas: Sci-Fi Scan Effect
+
+## Fase Inicial (Completada)
+- [x] **Shader:** Añadir shader `scifi_scan` al atlas + reconstrucción world position (Capa Base)
+- [x] **Shader:** Oscurecimiento del terreno — Darken Blend
+- [x] **Shader:** Frente de onda — Edge Gradient + máscara de radio
+- [x] **Shader:** Líneas holográficas — `frac()` sobre distancia al mundo
+- [x] **Shader:** Primera línea blanca vs líneas azules de rastro
+- [x] **C++:** Declarar FBO `scan_fbo`, uniforms del scanner, `renderScifiScan()`
+- [x] **C++:** Enviar uniforms de oscurecimiento al shader
+- [x] **C++:** Uniforms de radio animado + gradiente frontal
+- [x] **C++:** Uniforms de parámetros de líneas
+- [x] **C++:** Uniform de grosor de primera línea
+- [x] **C++:** Lógica de animación (3 fases) + scan_start_time + fade
+
+## Fase de Refinamiento (Completada)
+- [x] **Shader:** Modificar `CalculateScanLines` para gradientes suaves en las líneas (glowing effect)
+- [x] **Shader:** Añadir uniform `u_trail_width` e implementar `trailMask` para el desvanecimiento progresivo del rastro
+- [x] **C++:** Declarar nuevas variables miembro en `renderer.h` (`scan_manual_mode`, `scan_paused`, `scan_time`, `last_scan_frame_time`, `scan_trail_width`)
+- [x] **C++:** Actualizar lógica de actualización temporal e interpolación de fases basadas en `scan_time` en `renderer.cpp`
+- [x] **C++:** Enviar uniform `u_trail_width` al shader
+- [x] **C++:** Diseñar e implementar controles avanzados en ImGui (`showUI()`) para Modo Manual, Pausa, Timeline, rastro y grosor

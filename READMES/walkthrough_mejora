@@ -1,0 +1,54 @@
+# Resultados y Guía de Verificación: Sci-Fi Scan Refinado
+
+¡Los refinamientos estéticos y funcionales se han implementado con éxito! A continuación, se detalla qué ha cambiado y cómo probar cada elemento en la aplicación.
+
+---
+
+## 1. Cambios Realizados
+
+### Shader (`data/shader_atlas.glsl`)
+- **Gradiente Suave en Líneas Holográficas (`CalculateScanLines`):** Hemos reemplazado el corte abrupto `step()` de las líneas concéntricas por un perfil simétrico luminoso usando `smoothstep` y distancias relativas al centro del haz:
+  ```glsl
+  float halfWidth = u_line_width * 0.5;
+  float distToCenter = abs(fracDist - halfWidth);
+  return smoothstep(halfWidth, 0.0, distToCenter);
+  ```
+  Esto hace que las líneas ya no sean gruesas barras sólidas de color azul plano, sino que se comporten como proyectores holográficos de luz brillantes en el medio y suaves en sus bordes.
+- **Desvanecimiento Progresivo del Rastro (`trailMask`):** Introdujimos el uniform `u_trail_width` y calculamos una máscara de atenuación suave por detrás de la onda del escáner:
+  ```glsl
+  float trailMask = smoothstep(u_scan_radius - u_trail_width, u_scan_radius, dist);
+  ```
+  Esta máscara se multiplica con la máscara del oscurecimiento del suelo (`ApplyDarkenBlend`) y las líneas concéntricas (`linesMask`), logrando que todo el efecto se desvanezca sutil y gradualmente a medida que la onda avanza, dejando el suelo limpio detrás de ella.
+
+### C++ (`src/pipeline/renderer.h` y `renderer.cpp`)
+- **Gestión Temporal Unificada:** Ahora el escáner se rige por un acumulador de tiempo local (`scan_time`) e incrementos delta controlados (`dt`). Esto independiza el tiempo de animación del reloj global continuo de la aplicación, permitiendo pausar y alterar el tiempo.
+- **Panel de Control Sci-Fi Scan Avanzado en ImGui:** Diseñamos una interfaz interactiva dentro de la sección **Sci-Fi Scan** en ImGui:
+  1. **Activar / Desactivar Scan:** Botones estándar para lanzar el escáner desde la cámara.
+  2. **Modo Manual (Timeline scrubbing):** Checkbox para tomar control absoluto del tiempo.
+     - **Si está activo (Manual):** Se habilita un deslizador de **Línea de Tiempo (s)** que te permite avanzar, retroceder y congelar la animación en cualquier instante exacto (de `0.0s` a `3.0s`). También permite modificar manualmente el radio, la opacidad y el círculo de carga libremente.
+     - **Si está inactivo (Auto):** La animación se ejecuta sola y se muestra un botón para **Pausar / Reanudar (Play/Pause)** que congela la simulación en pleno vuelo. Además, muestra una **Barra de Progreso** animada muy elegante.
+  3. **Largo del Rastro (m):** Slider para modificar la longitud del desvanecimiento trasero (`scan_trail_width`) en caliente y ver cómo se difumina en tiempo real.
+
+---
+
+## 2. Guía de Verificación en la Aplicación
+
+Para verificar las mejoras visuales y funcionales paso a paso durante tu presentación de clase o en tu editor local, sigue esta guía:
+
+### Paso A: Verificar la Línea con Gradiente Suave (Glowing Lines)
+1. Lanza el escáner y pon el juego en pausa o activa el **Modo Manual**.
+2. Desplaza la **Línea de Tiempo** para colocar la onda a unos metros del jugador.
+3. Acerca la cámara al suelo para observar las líneas azules concéntricas.
+4. Verás que las líneas tienen un núcleo central brillante y bordes perfectamente difuminados que simulan volumen holográfico, en lugar de ser bandas de color sólido.
+
+### Paso B: Verificar el Trailing Fade-out (Desvanecimiento del Rastro)
+1. Lanza el escáner en modo automático y observa el terreno.
+2. A medida que la onda azul brillante del frente avanza, verás que el suelo oscuro y las líneas interiores concéntricas se van desvaneciendo suavemente por detrás.
+3. El terreno a espaldas de la onda recupera su brillo y color natural de forma progresiva, dejando limpio el suelo que queda muy atrás.
+4. Puedes modificar el slider **Largo del Rastro (m)**:
+   - Si lo bajas a `3.0` metros, verás un escáner extremadamente compacto (solo una banda fina que viaja y se borra casi al instante).
+   - Si lo subes a `25.0` metros, verás que el rastro se mantiene visible por más tiempo en una amplia zona.
+
+### Paso C: Probar los Nuevos Controles de Presentación (Modo Manual y Pausa)
+1. **Pausa:** Lanza el escáner y presiona **Pausar (Pause)**. La simulación y todas sus animaciones visuales asociadas (carga, expansión, desvanecimiento) se congelarán en el aire. Puedes mover la cámara libremente alrededor para tomar imágenes y analizar cómo el sombreador reconstruye la geometría tridimensional en ese preciso estado congelado. Presiona **Reanudar (Play)** y el escaneo continuará de manera fluida sin ningún salto brusco.
+2. **Timeline Scrubbing:** Marca la casilla **Modo Manual (Timeline scrubbing)**. Desliza a la izquierda y a la derecha el control de **Línea de Tiempo (s)**. Podrás ver cuadro a cuadro cómo se genera el círculo de carga oscurecido contrayéndose, la explosión inicial del frente de onda azul y blanco, su expansión exponencial y su suave fade-out hasta disolverse en la distancia. ¡Ideal para mostrar en una diapositiva o en vivo ante tus compañeros!

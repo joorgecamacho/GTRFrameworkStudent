@@ -150,5 +150,157 @@
 			"near_dist":	0.10000000149011612,
 			"light_type":	"POINT",
 			"type":	"LIGHT"
+		}, {
+			"name":	"floor4",
+			"layers":	3,
+			"position":	[0, 0, 6],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor5",
+			"layers":	3,
+			"position":	[0, 0, -6],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor6",
+			"layers":	3,
+			"position":	[0, 0, 9],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor7",
+			"layers":	3,
+			"position":	[0, 0, -9],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"car3",
+			"layers":	3,
+			"position":	[0.8, 0, 6.5],
+			"scale":	[0.00999999977648258, 0.00999999977648258, 0.00999999977648258],
+			"rotation":	[0, 0.7071068, 0, 0.7071068],
+			"filename":	"prefabs/gmc/scene.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"car4",
+			"layers":	3,
+			"position":	[-1.2, 0, -6.5],
+			"scale":	[0.01, 0.01, 0.01],
+			"rotation":	[0, -0.7071068, 0, 0.7071068],
+			"filename":	"prefabs/gmc/scene.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"tree2",
+			"layers":	3,
+			"position":	[3.0, 0.09, 6.0],
+			"scale":	[1.5, 1.5, 1.5],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/tree.glb",
+			"type":	"PREFAB"
+		}, {
+			"name":	"tree3",
+			"layers":	3,
+			"position":	[2.5, 0.09, -7.0],
+			"scale":	[0.8, 0.8, 0.8],
+			"rotation":	[0, 0.5, 0, 0.866],
+			"filename":	"prefabs/tree.glb",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor8",
+			"layers":	3,
+			"position":	[-3, 0, 0],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor9",
+			"layers":	3,
+			"position":	[-3, 0, 3],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor10",
+			"layers":	3,
+			"position":	[-3, 0, -3],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor11",
+			"layers":	3,
+			"position":	[-3, 0, 6],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor12",
+			"layers":	3,
+			"position":	[-3, 0, -6],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor13",
+			"layers":	3,
+			"position":	[-3, 0, 9],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor14",
+			"layers":	3,
+			"position":	[-3, 0, -9],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor15",
+			"layers":	3,
+			"position":	[3, 0, 6],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor16",
+			"layers":	3,
+			"position":	[3, 0, 9],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor17",
+			"layers":	3,
+			"position":	[3, 0, -6],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
+		}, {
+			"name":	"floor18",
+			"layers":	3,
+			"position":	[3, 0, -9],
+			"scale":	[0.10000000149011612, 0.10000000149011612, 0.10000000149011612],
+			"rotation":	[0, 0, 0, 1],
+			"filename":	"prefabs/road/road.gltf",
+			"type":	"PREFAB"
 		}]
 }

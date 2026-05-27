@@ -10,6 +10,7 @@ deferred_global quad.vs deferred_global.fs
 deferred_light basic.vs deferred_light.fs
 ssao quad.vs ssao.fs
 tonemap quad.vs tonemap.fs
+scifi_scan quad.vs scifi_scan.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -947,4 +948,236 @@ void main()
     ao_term = 1.0 - (ao_term / float(u_sample_count));
 
     FragColor = vec4(vec3(ao_term), 1.0);
+}
+
+// =============================================================================
+// EFECTO SCI-FI SCAN — SHADER DE POST-PROCESADO
+// Implementación capa por capa inspirada en el scanner de Death Stranding.
+//
+// CAPA 1: Reconstrucción de posición en World Space
+//   → Lee el depth buffer para reconstruir la posición XYZ real de cada píxel.
+//   → Sin esto, el efecto se deformaría al mover la cámara (efecto STATIC).
+// CAPA 2: Oscurecimiento del terreno (Darken Blend)
+//   → Dentro del radio del scanner, aplica min(sceneColor, darkenColor).
+//   → Hace que cualquier línea holográfica destaque sobre CUALQUIER superficie.
+// CAPA 3: Frente de onda (Edge Gradient)
+//   → Banda brillante en el borde frontal del radio expansivo.
+//   → Simula la "fricción" de la energía barriendo el terreno.
+// CAPA 4: Líneas holográficas (frac sobre distancia 3D)
+//   → frac() sobre la distancia real al mundo genera líneas ancladas al terreno.
+//   → Se mantienen estáticas aunque la cámara se mueva (efecto CRISP).
+// CAPA 5: Primera línea blanca (Visual Cue)
+//   → El anillo exterior más cercano al frente se pinta en blanco puro.
+//   → El ojo humano lo detecta instantáneamente como el "frente de avance".
+// =============================================================================
+\scifi_scan.fs
+
+#version 330 core
+
+in vec2 v_uv;
+
+// ---- Textura de profundidad del G-Buffer (generada en el pase de gbuffer) ----
+uniform sampler2D u_depth_texture;
+
+// ---- Textura de color de la escena ya iluminada (resultado del tonemap) ----
+uniform sampler2D u_scene_color_texture;
+
+// ---- Matriz inversa de ViewProjection: transforma Clip Space → World Space ----
+uniform mat4 u_inverse_viewprojection;
+
+// ---- Resolución inversa de la pantalla (1/width, 1/height) ----
+uniform vec2 u_iRes;
+
+// ---- Parámetros del escáner ----
+uniform vec3  u_scan_origin;      // Posición XYZ del jugador al activar el scan
+uniform float u_scan_radius;      // Radio actual (animado desde la CPU)
+uniform float u_scan_active;      // 1.0 = activo, 0.0 = inactivo
+
+// ---- CAPA 2: Oscurecimiento del terreno ----
+uniform vec3  u_darken_color;     // Color de mezcla oscuro (ej. azul marino muy oscuro)
+uniform float u_darken_strength;  // Opacidad del oscurecimiento [0..1]
+
+// ---- CAPA 3: Frente de onda ----
+uniform float u_edge_width;       // Grosor de la banda de brillo frontal (en metros)
+uniform vec3  u_edge_color;       // Color de la onda (azul holográfico brillante)
+uniform float u_edge_intensity;   // Brillo de la onda
+
+// ---- CAPA 4: Líneas holográficas ----
+uniform float u_line_interval;    // Distancia entre líneas (metros)
+uniform float u_line_width;       // Grosor de cada línea (metros)
+uniform vec3  u_line_color;       // Color de las líneas interiores (azul holográfico)
+uniform float u_line_intensity;   // Brillo de las líneas
+
+// ---- CAPA 5: Primera línea blanca (Visual Cue) ----
+uniform float u_leading_intensity; // Brillo extra de la línea blanca delantera
+
+// ---- PASO 6: Animación (controlada desde la CPU) ----
+uniform float u_scan_opacity;    // Opacidad global del efecto [0..1] (fade in/out)
+uniform float u_charge_radius;   // Radio del círculo oscuro de carga que se contrae
+uniform float u_trail_width;     // Ancho del rastro en metros (desvanecimiento posterior)
+
+out vec4 FragColor;
+
+// =============================================================================
+// FUNCIÓN: Reconstrucción de World Position desde el depth buffer
+// Convierte screen UV + raw depth → posición 3D en World Space
+// =============================================================================
+vec3 GetWorldPosition(vec2 screenUV, float rawDepth)
+{
+    // 1. Mapear de [0,1] a [-1,1] para obtener coordenadas NDC (Normalized Device Coords)
+    vec2 ndc_xy = screenUV * 2.0 - 1.0;
+
+    // 2. El depth raw del buffer también va de 0 a 1; mapeamos a [-1, 1] para Clip Space
+    float ndc_z = rawDepth * 2.0 - 1.0;
+
+    // 3. Construir el punto en Clip Space homogéneo (w = 1 antes de dividir)
+    vec4 clipSpacePos = vec4(ndc_xy, ndc_z, 1.0);
+
+    // 4. Multiplicar por la matriz inversa de ViewProjection → World Space
+    vec4 worldSpacePos = u_inverse_viewprojection * clipSpacePos;
+
+    // 5. División de perspectiva: obtener las coordenadas XYZ reales
+    return worldSpacePos.xyz / worldSpacePos.w;
+}
+
+// =============================================================================
+// FUNCIÓN: Darken Blend
+// Oscurece el color base usando la fórmula del modo "Oscurecer" de Photoshop.
+// Toma el mínimo de cada canal RGB → garantiza contraste sobre cualquier textura.
+// =============================================================================
+vec3 ApplyDarkenBlend(vec3 sceneColor, vec3 darkenColor, float mask)
+{
+    // min() componente a componente = el canal más oscuro siempre gana
+    vec3 blended = min(sceneColor, darkenColor);
+    // lerp: mezcla suave según la máscara del scanner y la fuerza del efecto
+    return mix(sceneColor, blended, mask);
+}
+
+// =============================================================================
+// FUNCIÓN: Frente de onda (Edge Gradient)
+// Genera una banda brillante justo en el borde exterior del radio activo.
+// Usa smoothstep para crear una rampa suave de 0 (atrás) a 1 (borde frontal).
+// =============================================================================
+float CalculateEdgeGradient(float dist)
+{
+    // smoothstep(edge0, edge1, x): rampa suave de 0 a 1 entre edge0 y edge1
+    // Aquí: la rampa va de 0 (al comienzo de la banda) a 1 (en el borde frontal)
+    float gradient = smoothstep(u_scan_radius - u_edge_width, u_scan_radius, dist);
+
+    // step(): máscara binaria que elimina cualquier cosa fuera del radio
+    // Esto convierte la rampa en un "diente de sierra": sube suave, corta seco
+    float insideRadius = step(dist, u_scan_radius);
+
+    return gradient * insideRadius;
+}
+
+// =============================================================================
+// FUNCIÓN: Líneas holográficas (Scan Lines)
+// Usa frac() para generar líneas concéntricas ancladas al World Space.
+// Al usar la DISTANCIA REAL AL MUNDO (no la profundidad de cámara), las líneas
+// se mantienen completamente ESTÁTICAS aunque la cámara se mueva o rote.
+// El intervalo crece con la distancia para dar separación progresiva (efecto WEIGHT).
+// =============================================================================
+float CalculateScanLines(float dist)
+{
+    // El intervalo entre líneas crece un 3% por cada metro de distancia.
+    // Con dist=0 el intervalo es u_line_interval, con dist=50m es 2.5x mayor.
+    float dynamicInterval = u_line_interval * (1.0 + dist * 0.03);
+
+    // frac(x) = parte decimal de x: repite el patrón [0..1) infinitamente.
+    // Al dividir dist por el intervalo, cada "diente" es una línea potencial.
+    // Multiplicamos de nuevo por el intervalo para que la comparación sea en metros.
+    float fracDist = fract(dist / dynamicInterval) * dynamicInterval;
+
+    // smoothstep simétrico para que las líneas tengan un gradiente suave
+    // en lugar de ser un bloque binario plano.
+    float halfWidth = u_line_width * 0.5;
+    float distToCenter = abs(fracDist - halfWidth);
+    return smoothstep(halfWidth, 0.0, distToCenter);
+}
+
+void main()
+{
+    // Calcular las UVs de este fragmento a partir de su posición en pantalla
+    vec2 uv = gl_FragCoord.xy * u_iRes;
+
+    // Leer el color original de la escena (sin modificar por ahora)
+    vec3 sceneColor = texture(u_scene_color_texture, uv).rgb;
+
+    // Leer la profundidad en bruto del G-Buffer para este píxel
+    float rawDepth = texture(u_depth_texture, uv).r;
+
+    // --- Early exit: si es el skybox (depth == 1.0), no aplicar el efecto ---
+    if (rawDepth >= 0.9999) {
+        FragColor = vec4(sceneColor, 1.0);
+        return;
+    }
+
+    // --- CAPA 1: Reconstruir la posición 3D del píxel en el mundo ---
+    vec3 worldPos = GetWorldPosition(uv, rawDepth);
+
+    // Distancia horizontal (plano XZ) desde el origen del scan
+    // Usar XZ hace que el efecto siga el suelo independientemente de la altura del terreno
+    float dist = distance(worldPos.xz, u_scan_origin.xz);
+
+    // Máscara general de área: 1.0 dentro del radio, 0.0 fuera
+    float insideMask = step(dist, u_scan_radius);
+
+    // Máscara de desvanecimiento progresivo del rastro (Trailing Fade-out)
+    // A medida que la onda avanza, el rastro trasero se va difuminando suavemente.
+    float trailMask = smoothstep(u_scan_radius - u_trail_width, u_scan_radius, dist);
+
+    // --- CAPA 2: Oscurecimiento del terreno (Darken Blend) ---
+    // El oscurecimiento también se desvanece suavemente detrás del frente de onda
+    vec3 workingColor = ApplyDarkenBlend(sceneColor, u_darken_color, insideMask * trailMask * u_darken_strength);
+
+    // --- ANIMACIÓN (Paso 6): Círculo de carga que se contrae ---
+    // Durante la Fase 1, un círculo oscuro adicional se CONTRAE hacia el origen.
+    // Cuando u_charge_radius > 0, todo lo que está DENTRO de ese radio se oscurece aún más,
+    // creando la ilusión de "carga de energía" antes de la explosión de la onda.
+    if (u_charge_radius > 0.0) {
+        float chargeMask = step(dist, u_charge_radius);  // 1.0 dentro del círculo de carga
+        workingColor = ApplyDarkenBlend(workingColor, vec3(0.0, 0.0, 0.05), chargeMask * 0.9);
+    }
+
+    // --- CAPA 3: Frente de onda (Edge Gradient) ---
+    // Rampa que va de 0 (interior) a 1 (borde frontal) → emisión aditiva azul
+    float edgeGrad   = CalculateEdgeGradient(dist);
+    vec3 edgeEmission = edgeGrad * u_edge_color * u_edge_intensity;
+
+    // --- CAPA 4 + 5: Líneas holográficas con primera línea blanca ---
+    float dynamicInterval = u_line_interval * (1.0 + dist * 0.03);
+    float linesMask = CalculateScanLines(dist) * insideMask * trailMask;
+
+    // CAPA 5: Detectar el anillo más exterior (el inmediatamente detrás del frente).
+    //
+    // La idea: contamos hacia atrás desde u_scan_radius.
+    // "distFromEdge" = cuánto se ha alejado el píxel del frente de la onda.
+    // Si esa distancia cae dentro del PRIMER período del intervalo dinámico,
+    // estamos en la línea más exterior → la pintamos en BLANCO.
+    float distFromEdge = u_scan_radius - dist;
+    float isFirstRing  = step(0.0, distFromEdge) * step(distFromEdge, dynamicInterval);
+
+    // Máscara de la primera línea: solo donde hay línea Y estamos en el primer anillo
+    float leadingLineMask  = linesMask * isFirstRing;
+    // Máscara de las líneas interiores: todas menos la primera
+    float interiorLinesMask = linesMask * (1.0 - isFirstRing);
+
+    // Emisión azul para líneas interiores, blanco puro para la línea delantera
+    vec3 linesEmission   = interiorLinesMask * u_line_color   * u_line_intensity;
+    vec3 leadingEmission = leadingLineMask   * vec3(1.0, 1.0, 1.0) * u_leading_intensity;
+
+    // --- Composición final: todas las capas sumadas (método aditivo) ---
+    // workingColor  = escena oscurecida              (Capa 2)
+    // edgeEmission  = brillo del frente de onda      (Capa 3) [aditivo]
+    // linesEmission = líneas holográficas azules     (Capa 4) [aditivo]
+    // leadingEmission = primera línea blanca         (Capa 5) [aditivo]
+    //
+    // u_scan_opacity modula TODAS las emisiones aditivas pero NO el oscurecimiento
+    // (el fondo oscuro se aplica siempre para dar continuidad visual durante el fade)
+    float opacity    = u_scan_opacity;
+    vec3 allEmission = (edgeEmission + linesEmission + leadingEmission) * opacity;
+    vec3 finalColor  = workingColor + allEmission;
+
+    FragColor = vec4(finalColor, 1.0);
 }

@@ -581,6 +581,68 @@ void Renderer::renderDeferred(Camera* camera) {
 		tonemap_shader->setUniform("u_exposure", tonemap_exposure);
 		illumination_fbo->color_textures[0]->toViewport(tonemap_shader);
 	}
+
+	// Pase de post-procesado: efecto Sci-Fi Scan (se aplica sobre el color ya tonemapeado)
+	// El update de la animación se hace aquí, antes del render, para tener el radio actualizado.
+	if (scan_active) {
+		// 1. Calcular delta de tiempo local y acumular
+		long current_time = getTime();
+		float dt = (last_scan_frame_time == 0) ? 0.0f : (current_time - last_scan_frame_time) * 0.001f;
+		last_scan_frame_time = current_time;
+
+		if (!scan_manual_mode && !scan_paused) {
+			scan_time += dt;
+		}
+
+		// Usar scan_time como el tiempo 't' de animación
+		float t = scan_time;
+
+		// ============================================================
+		// FASE 1 (0.0s — 0.5s): CARGA — Círculo oscuro que se contrae
+		// El radio crece lentamente, scan_opacity sube de 0 a 1.
+		// Un círculo de carga se contrae hacia el jugador.
+		// ============================================================
+		if (t < 0.5f) {
+			float phase_t      = t / 0.5f;               // [0..1] dentro de la fase
+			scan_radius        = phase_t * phase_t * 2.0f; // crece lento (ease-in cuadrático)
+			scan_charge_radius = (1.0f - phase_t) * 2.5f; // contrae de 2.5m a 0
+			scan_opacity       = phase_t;                 // fade-in del efecto
+		}
+		// ============================================================
+		// FASE 2 (0.5s — 0.8s): PAUSA — Tensión antes de la onda
+		// El radio para, el círculo de carga desaparece, opacidad máxima.
+		// ============================================================
+		else if (t < 0.8f) {
+			scan_radius        = 2.0f;
+			scan_charge_radius = 0.0f;
+			scan_opacity       = 1.0f;
+		}
+		// ============================================================
+		// FASE 3 (0.8s+): EXPANSIÓN — Onda rápida con decaimiento exponencial
+		// La velocidad empieza alta y decae: simula "energía que se agota".
+		// Al acercarse al radio máximo, el efecto hace fade-out.
+		// ============================================================
+		else {
+			float et           = t - 0.8f;               // tiempo desde inicio de fase 3
+			// (1 - e^-kt): curva que sube rápido y se aplana — k=1.8 controla la velocidad
+			scan_radius        = 2.0f + (1.0f - expf(-et * 1.8f)) * (scan_max_radius - 2.0f);
+			scan_charge_radius = 0.0f;
+			// Fade-out cuando el radio supera el 75% del máximo
+			float progress     = scan_radius / scan_max_radius;
+			scan_opacity       = (progress > 0.75f)
+							  ? clamp((1.0f - progress) / 0.25f, 0.0f, 1.0f)
+							  : 1.0f;
+			// Apagar automáticamente al terminar si no estamos en modo manual
+			if (scan_opacity <= 0.01f && !scan_manual_mode) {
+				scan_active = false;
+				scan_radius = 0.0f;
+			}
+		}
+	} else {
+		// Resetear la marca de tiempo cuando esté inactivo
+		last_scan_frame_time = 0;
+	}
+	renderScifiScan(camera);
 	
 	// 2. Copiamos la profundidad usando un shader en lugar de glBlitFramebuffer
 	// ya que el glBlitFramebuffer al FBO por defecto (0) falla por incompatibilidad
@@ -608,6 +670,101 @@ void Renderer::renderDeferred(Camera* camera) {
 		}
 	}
 	glDisable(GL_BLEND);
+}
+
+// =============================================================================
+// EFECTO SCI-FI SCAN — PASE DE POST-PROCESADO
+// Este método se ejecuta DESPUÉS del tonemap, aplicando el efecto encima
+// del color final de la escena usando el depth buffer del G-Buffer.
+//
+// CAPA 1: Reconstrucción de World Position (base invisible del efecto)
+// CAPA 2: Oscurecimiento del terreno (Darken Blend)
+//   → Aplica min(sceneColor, darkenColor) en el disco del scanner.
+//   → Prepara el lienzo para que las líneas holográficas sean legibles.
+// =============================================================================
+void Renderer::renderScifiScan(Camera* camera)
+{
+    if (!scan_active) return;
+
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    int width  = viewport[2];
+    int height = viewport[3];
+
+    // Crear (o recrear si cambia la resolución) el FBO que captura el color de pantalla
+    if (scan_fbo == nullptr ||
+        scan_fbo->color_textures[0]->width  != width ||
+        scan_fbo->color_textures[0]->height != height)
+    {
+        if (scan_fbo) delete scan_fbo;
+        scan_fbo = new GFX::FBO();
+        scan_fbo->create(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE, false);
+    }
+
+    // --- CAPTURA: copiar el framebuffer actual (color de la escena) al FBO ---
+    // Usamos glBlitFramebuffer para copiar el color del framebuffer por defecto
+    // al FBO de captura. Así el shader puede leerlo como textura.
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan_fbo->fbo_id);
+    glBlitFramebuffer(
+        0, 0, width, height,
+        0, 0, width, height,
+        GL_COLOR_BUFFER_BIT, GL_NEAREST
+    );
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // --- RENDER: ejecutar el shader scifi_scan sobre un quad de pantalla completa ---
+    GFX::Shader* scan_shader = GFX::Shader::Get("scifi_scan");
+    if (!scan_shader) return;
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+
+    scan_shader->enable();
+
+    // CAPA 1: Uniforms para la reconstrucción de world position
+    scan_shader->setUniform("u_depth_texture",          gbuffer_fbo->depth_texture,       0);
+    scan_shader->setUniform("u_scene_color_texture",    scan_fbo->color_textures[0],       1);
+    scan_shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+    scan_shader->setUniform("u_iRes",  vec2(1.0f / (float)width, 1.0f / (float)height));
+
+    // Uniforms del estado del scanner
+    scan_shader->setUniform("u_scan_origin", scan_origin);
+    scan_shader->setUniform("u_scan_radius", scan_radius);
+    scan_shader->setUniform("u_scan_active", scan_active ? 1.0f : 0.0f);
+    // PASO 6: Animación — opacidad global, círculo de carga y ancho del rastro
+    scan_shader->setUniform("u_scan_opacity",       scan_opacity);
+    scan_shader->setUniform("u_charge_radius",      scan_charge_radius);
+    scan_shader->setUniform("u_trail_width",        scan_trail_width);
+
+    // CAPA 2: Oscurecimiento del terreno
+    // Azul marino muy oscuro — hace que las líneas azules y blancas resalten
+    scan_shader->setUniform("u_darken_color",    vec3(0.02f, 0.05f, 0.12f));
+    scan_shader->setUniform("u_darken_strength", 0.85f); // 85% de oscurecimiento
+
+    // CAPA 3: Frente de onda (Edge Gradient)
+    // Escala menor: borde de 0.8m
+    scan_shader->setUniform("u_edge_width",     0.8f);
+    scan_shader->setUniform("u_edge_color",     vec3(0.1f, 0.6f, 1.0f));
+    scan_shader->setUniform("u_edge_intensity", 1.5f);
+
+    // CAPA 4: Líneas holográficas (frac sobre distancia World Space)
+    // Escala menor: líneas cada 1.2 metros, grosor 0.04m
+    scan_shader->setUniform("u_line_interval",  1.2f);
+    scan_shader->setUniform("u_line_width",     0.04f);
+    scan_shader->setUniform("u_line_color",     vec3(0.0f, 0.5f, 1.0f));
+    scan_shader->setUniform("u_line_intensity", 2.0f);
+
+    // CAPA 5: Primera línea blanca (Visual Cue)
+    // Más brillante que las interiores para que destaque como el "frente de avance"
+    scan_shader->setUniform("u_leading_intensity", 3.5f);
+
+    // Renderizar el quad de pantalla completa → el shader se ejecuta una vez por píxel
+    GFX::Mesh::getQuad()->render(GL_TRIANGLES);
+
+    scan_shader->disable();
+
+    glEnable(GL_DEPTH_TEST);
 }
 
 void Renderer::renderMeshWithMaterialForward(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material) {
@@ -700,6 +857,79 @@ void Renderer::showUI()
 
 	if (ImGui::TreeNode("HDR / Tonemap")) {
 		ImGui::SliderFloat("Exposure", &tonemap_exposure, 0.1f, 8.0f);
+		ImGui::TreePop();
+	}
+
+	// === SCI-FI SCAN Controls ===
+	if (ImGui::TreeNode("Sci-Fi Scan")) {
+		ImGui::Text("Estado: %s", scan_active ? "ACTIVO" : "INACTIVO");
+		
+		if (ImGui::Button("Activar Scan")) {
+			// Tomar el origen desde la posición de la cámara actual
+			scan_origin     = Camera::current->eye;
+			scan_radius     = 0.0f;
+			scan_opacity    = 0.0f;
+			scan_charge_radius = 2.5f;
+			scan_start_time = getTime(); // registrar el momento de activación
+			scan_time       = 0.0f;
+			last_scan_frame_time = getTime();
+			scan_paused     = false;
+			scan_active     = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Desactivar")) {
+			scan_active = false;
+			scan_radius = 0.0f;
+			scan_time   = 0.0f;
+		}
+
+		if (scan_active) {
+			ImGui::Separator();
+			ImGui::Text("--- Controles de Simulación ---");
+			
+			// Checkbox para el modo manual
+			ImGui::Checkbox("Modo Manual (Timeline scrubbing)", &scan_manual_mode);
+			
+			if (scan_manual_mode) {
+				// En modo manual, el usuario controla scan_time a través de un slider de timeline
+				ImGui::SliderFloat("Línea de Tiempo (s)", &scan_time, 0.0f, 3.0f);
+				ImGui::Text("Scrubbing manual activo.");
+			} else {
+				// En modo automático, podemos pausar/reanudar
+				if (scan_paused) {
+					if (ImGui::Button("Reanudar (Play)")) {
+						scan_paused = false;
+						last_scan_frame_time = getTime(); // Evitar saltos de tiempo
+					}
+				} else {
+					if (ImGui::Button("Pausar (Pause)")) {
+						scan_paused = true;
+					}
+				}
+				
+				// Mostrar el tiempo como una barra de progreso elegante
+				float progress_fraction = scan_time / 3.0f;
+				ImGui::Text("Progreso automático:");
+				ImGui::ProgressBar(progress_fraction > 1.0f ? 1.0f : progress_fraction, ImVec2(-1, 0));
+			}
+			
+			ImGui::Separator();
+			ImGui::Text("--- Parámetros Físicos / Visuales ---");
+			// Deslizador para ajustar el ancho del rastro de desvanecimiento
+			ImGui::SliderFloat("Largo del Rastro (m)", &scan_trail_width, 1.0f, 30.0f);
+			
+			// Mostrar valores calculados en tiempo real (o editables si es manual libre)
+			if (scan_manual_mode) {
+				ImGui::SliderFloat("Radio Onda (m)", &scan_radius, 0.0f, scan_max_radius);
+				ImGui::SliderFloat("Opacidad Efecto", &scan_opacity, 0.0f, 1.0f);
+				ImGui::SliderFloat("Radio Carga (m)", &scan_charge_radius, 0.0f, 5.0f);
+			} else {
+				ImGui::Text("Radio calculado: %.2f m", scan_radius);
+				ImGui::Text("Opacidad calculada: %.2f", scan_opacity);
+				ImGui::Text("Carga calculada: %.2f m", scan_charge_radius);
+			}
+		}
+		
 		ImGui::TreePop();
 	}
 }
