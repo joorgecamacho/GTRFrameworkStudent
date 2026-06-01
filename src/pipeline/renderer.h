@@ -58,41 +58,31 @@ namespace SCN {
 		float ssao_radius = 0.05f;   // Radio de búsqueda de oclusores
 		std::vector<Vector3f> ssao_sample_points; // Puntos de muestreo precalculados (radio 1.0)
 
-		// === Sci-Fi Scanner (Method B — T5.1) ===
-		bool enable_scanner = true;
-		bool scanner_active = false;
-		Vector3f scanner_origin = Vector3f(0, 0, 0);
-		float scanner_radius = 0.0f;
-		float scanner_max_radius = 45.0f;
-		float scanner_pulse_width = 0.45f;
-		Vector3f scanner_color = Vector3f(0.1f, 0.8f, 1.0f);
-		float scanner_intensity = 3.2f;
-		float scanner_sharpness = 3.0f;
-		float scanner_elapsed = 0.0f;
-		float scanner_duration = 7.0f;
-		float scanner_edge_width = 0.8f;
-		float scanner_grid_spacing = 3.5f;
-		float scanner_grid_scale = 0.04f;
-		float scanner_grid_line_width = 0.1f;
-		float scanner_grid_intensity = 0.55f;
-		float scanner_trail_width = 16.0f;
-		Vector3f scanner_darken_color = Vector3f(0.01f, 0.04f, 0.12f);
-		float scanner_darken_amount = 0.92f;
-		bool scanner_show_sphere = true;   // T5.1: render the expanding sphere mesh
-		float scanner_sphere_rim = 2.5f;   // fresnel falloff (faint shell)
-		float scanner_sphere_alpha = 1.0f; // ring opacity
-		float scanner_contact_thickness = 0.35f; // Method A: contact ring width (meters)
-		float scanner_rim_strength = 0.35f;       // volumetric shell on leading ring
+		// === Sci-Fi Scanner — Method A: Geometric Mesh Expansion (T5.1) ===
+		// An expanding 3D sphere whose polygons, where they intersect the scene
+		// geometry, are lit by a depth-intersection shader (the contact ring).
+		bool enable_scanner = true;               // global on/off
+		bool scanner_active = false;              // a scan is currently playing
+		Vector3f scanner_origin = Vector3f(0, 0, 0); // world center of the expanding sphere
+		float scanner_radius = 0.0f;              // current sphere radius (animated)
+		float scanner_max_radius = 45.0f;         // radius reached at the end of the scan
+		float scanner_elapsed = 0.0f;             // seconds since the scan was triggered
+		float scanner_duration = 7.0f;            // total scan length in seconds
+		Vector3f scanner_color = Vector3f(0.1f, 0.85f, 1.0f); // holographic cyan
+		float scanner_intensity = 3.5f;           // emissive strength of the contact ring
+		bool scanner_show_sphere = true;          // render the expanding sphere mesh
+		float scanner_sphere_rim = 2.5f;          // fresnel exponent of the bubble shell
+		float scanner_sphere_alpha = 1.0f;        // ring opacity
+		float scanner_contact_thickness = 0.35f;  // contact ring width (meters)
+		float scanner_rim_strength = 0.35f;       // visible energy bubble on leading shell
 		int scanner_ring_count = 6;               // number of concentric sub-lines
 		float scanner_ring_spacing = 1.8f;        // distance between sub-lines (meters)
 		float scanner_ground_height = 0.0f;       // y of the floor (sphere origin height)
-		bool scanner_screenspace_layers = false;  // kept off — Method A only
 
 		void triggerScanner(const Vector3f& origin);
 		void renderScannerSphere(Camera* camera);
 		void updateScanner(float dt);
 		float evaluateScannerRadius() const;
-		void bindScannerUniforms(GFX::Shader* shader);
 		void resetScannerDefaults();
 
 		SCN::Scene* scene;

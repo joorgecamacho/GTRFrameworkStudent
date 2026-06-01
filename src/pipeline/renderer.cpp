@@ -89,29 +89,6 @@ void Renderer::updateScanner(float dt)
 	scanner_radius = evaluateScannerRadius();
 }
 
-void Renderer::bindScannerUniforms(GFX::Shader* shader)
-{
-	if (!shader) return;
-
-	shader->setUniform1("u_scanner_enabled", enable_scanner ? 1 : 0);
-	shader->setUniform1("u_scanner_active", scanner_active ? 1 : 0);
-	shader->setUniform1("u_scanner_screenspace", scanner_screenspace_layers ? 1 : 0);
-	shader->setUniform("u_scanner_origin", scanner_origin);
-	shader->setUniform("u_scanner_radius", scanner_radius);
-	shader->setUniform("u_scanner_pulse_width", scanner_pulse_width);
-	shader->setUniform("u_scanner_color", scanner_color);
-	shader->setUniform("u_scanner_intensity", scanner_intensity);
-	shader->setUniform("u_scanner_sharpness", scanner_sharpness);
-	shader->setUniform("u_scanner_edge_width", scanner_edge_width);
-	shader->setUniform("u_scanner_grid_spacing", scanner_grid_spacing);
-	shader->setUniform("u_scanner_grid_scale", scanner_grid_scale);
-	shader->setUniform("u_scanner_grid_line_width", scanner_grid_line_width);
-	shader->setUniform1("u_scanner_grid_intensity", scanner_grid_intensity);
-	shader->setUniform("u_scanner_trail_width", scanner_trail_width);
-	shader->setUniform("u_scanner_darken_color", scanner_darken_color);
-	shader->setUniform("u_scanner_darken_amount", scanner_darken_amount);
-}
-
 void Renderer::renderScannerSphere(Camera* camera)
 {
 	if (!enable_scanner || !scanner_active || !scanner_show_sphere)
@@ -608,8 +585,6 @@ void Renderer::renderDeferred(Camera* camera) {
 	// SSAO: enviar la textura de oclusión al shader de iluminación
 	global_shader->setUniform("u_ssao_texture", ssao_fbo->color_textures[0], 4);
 	global_shader->setUniform1("u_enable_ssao", enable_ssao ? 1 : 0);
-
-	bindScannerUniforms(global_shader);
 
 	// Filtrar y enviar luces direccionales
 	vec3 dir_light_colors[MAX_LIGHTS];
