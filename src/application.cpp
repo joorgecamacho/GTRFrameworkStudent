@@ -107,6 +107,8 @@ void Application::update(double seconds_elapsed)
 	if (Input::isKeyPressed(SDL_SCANCODE_Q)) camera->moveGlobal(vec3(0.0f, -1.0f, 0.0f) * speed);
 	if (Input::isKeyPressed(SDL_SCANCODE_E)) camera->moveGlobal(vec3(0.0f, 1.0f, 0.0f) * speed);
 
+	renderer->updateScanner((float)seconds_elapsed);
+
 	//to navigate with the mouse fixed in the middle
 	CORE::showCursor(!mouse_locked);
 	#ifndef SKIP_IMGUI
@@ -145,6 +147,10 @@ void Application::onKeyDown( SDL_KeyboardEvent event )
 			scene->load(scene->filename.c_str());
 			camera->lookAt(scene->main_camera.eye, scene->main_camera.center, Vector3f(0, 1, 0));
 			camera->fov = scene->main_camera.fov;
+			break;
+		case SDLK_SPACE:
+			if (renderer->enable_scanner)
+				renderer->triggerScanner(camera->eye);
 			break;
 	}
 }

@@ -48,6 +48,151 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	ssao_sample_points = generateSpherePoints(ssao_num_samples, 1.0f, ssao_hemisphere);
 }
 
+void Renderer::triggerScanner(const Vector3f& origin)
+{
+	// Drop the origin to ground level so the sphere's equator cuts the floor
+	// plane in a full expanding circle (radar rings). A center up in the air
+	// would only intersect the ground once the radius exceeds its height.
+	scanner_origin = Vector3f(origin.x, scanner_ground_height, origin.z);
+	scanner_radius = 0.0f;
+	scanner_elapsed = 0.0f;
+	scanner_active = true;
+}
+
+float Renderer::evaluateScannerRadius() const
+{
+	if (scanner_duration <= 0.0f)
+		return scanner_max_radius;
+
+	float t = scanner_elapsed / scanner_duration;
+	if (t > 1.0f) t = 1.0f;
+
+	// Smoothstep: gentle start with "weight" but still reaches a large radius
+	// well before the end, so the rings are visible across the scene.
+	float eased = t * t * (3.0f - 2.0f * t);
+	return scanner_max_radius * eased;
+}
+
+void Renderer::updateScanner(float dt)
+{
+	if (!scanner_active)
+		return;
+
+	scanner_elapsed += dt;
+	if (scanner_elapsed >= scanner_duration) {
+		scanner_active = false;
+		scanner_elapsed = 0.0f;
+		scanner_radius = 0.0f;
+		return;
+	}
+
+	scanner_radius = evaluateScannerRadius();
+}
+
+void Renderer::bindScannerUniforms(GFX::Shader* shader)
+{
+	if (!shader) return;
+
+	shader->setUniform1("u_scanner_enabled", enable_scanner ? 1 : 0);
+	shader->setUniform1("u_scanner_active", scanner_active ? 1 : 0);
+	shader->setUniform1("u_scanner_screenspace", scanner_screenspace_layers ? 1 : 0);
+	shader->setUniform("u_scanner_origin", scanner_origin);
+	shader->setUniform("u_scanner_radius", scanner_radius);
+	shader->setUniform("u_scanner_pulse_width", scanner_pulse_width);
+	shader->setUniform("u_scanner_color", scanner_color);
+	shader->setUniform("u_scanner_intensity", scanner_intensity);
+	shader->setUniform("u_scanner_sharpness", scanner_sharpness);
+	shader->setUniform("u_scanner_edge_width", scanner_edge_width);
+	shader->setUniform("u_scanner_grid_spacing", scanner_grid_spacing);
+	shader->setUniform("u_scanner_grid_scale", scanner_grid_scale);
+	shader->setUniform("u_scanner_grid_line_width", scanner_grid_line_width);
+	shader->setUniform1("u_scanner_grid_intensity", scanner_grid_intensity);
+	shader->setUniform("u_scanner_trail_width", scanner_trail_width);
+	shader->setUniform("u_scanner_darken_color", scanner_darken_color);
+	shader->setUniform("u_scanner_darken_amount", scanner_darken_amount);
+}
+
+void Renderer::renderScannerSphere(Camera* camera)
+{
+	if (!enable_scanner || !scanner_active || !scanner_show_sphere)
+		return;
+	if (scanner_radius <= 0.01f)
+		return;
+
+	GFX::Shader* shader = GFX::Shader::Get("scanner_sphere");
+	if (!shader)
+		return;
+
+	// REQUIRED render state for the intersection to ALWAYS be visible:
+	//  - Additive blend (energy look, never hidden by background)
+	//  - Depth TEST DISABLED: we need the sphere fragments that fall behind
+	//    geometry, otherwise they'd be culled before we can detect contact.
+	//  - Depth mask OFF: the bubble never writes depth (it is not solid).
+	//  - Cull back faces: one clean front-facing contact line per shell.
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_CULL_FACE); // both hemispheres → full intersection circle
+
+	shader->enable();
+	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 0);
+	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+	shader->setUniform("u_iRes", vec2(1.0f / (float)illumination_fbo->width, 1.0f / (float)illumination_fbo->height));
+	shader->setUniform("u_scanner_color", scanner_color);
+	shader->setUniform("u_contact_thickness", scanner_contact_thickness);
+	shader->setUniform("u_rim_power", scanner_sphere_rim);
+
+	// Multiple concentric expanding shells = a leading ring + trailing sub-lines.
+	// Each shell is the same sphere mesh scaled to a slightly smaller radius.
+	for (int i = 0; i < scanner_ring_count; ++i) {
+		float r = scanner_radius - i * scanner_ring_spacing;
+		if (r <= 0.05f)
+			continue;
+
+		float fade = 1.0f - (float)i / (float)scanner_ring_count; // trailing rings dimmer
+
+		Matrix44 model;
+		model.setTranslation(scanner_origin.x, scanner_origin.y, scanner_origin.z);
+		model.scale(r, r, r);
+
+		shader->setUniform("u_model", model);
+		shader->setUniform("u_scanner_intensity", scanner_intensity * fade);
+		shader->setUniform("u_sphere_alpha", scanner_sphere_alpha * fade);
+		// Only the leading shell shows the faint volumetric bubble shell
+		shader->setUniform("u_rim_strength", (i == 0) ? scanner_rim_strength : 0.0f);
+
+		sphere.render(GL_TRIANGLES);
+	}
+
+	shader->disable();
+
+	// Restore state
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_LESS);
+	glCullFace(GL_BACK);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_BLEND);
+}
+
+void Renderer::resetScannerDefaults()
+{
+	scanner_max_radius = 45.0f;
+	scanner_color = Vector3f(0.1f, 0.85f, 1.0f);
+	scanner_intensity = 3.5f;
+	scanner_duration = 7.0f;
+	scanner_show_sphere = true;
+	scanner_sphere_rim = 2.5f;
+	scanner_sphere_alpha = 1.0f;
+	scanner_contact_thickness = 0.35f;
+	scanner_rim_strength = 0.35f;
+	scanner_ring_count = 6;
+	scanner_ring_spacing = 1.8f;
+}
+
 void Renderer::setupScene()
 {
 	if (scene->skybox_filename.size())
@@ -464,6 +609,8 @@ void Renderer::renderDeferred(Camera* camera) {
 	global_shader->setUniform("u_ssao_texture", ssao_fbo->color_textures[0], 4);
 	global_shader->setUniform1("u_enable_ssao", enable_ssao ? 1 : 0);
 
+	bindScannerUniforms(global_shader);
+
 	// Filtrar y enviar luces direccionales
 	vec3 dir_light_colors[MAX_LIGHTS];
 	vec3 dir_light_dirs[MAX_LIGHTS];
@@ -565,7 +712,10 @@ void Renderer::renderDeferred(Camera* camera) {
 	glDepthFunc(GL_LESS);
 	glFrontFace(GL_CCW);
 	glDisable(GL_BLEND);
-	
+
+	// T5.1: visible expanding bubble (rendered into HDR buffer, depth-tested)
+	renderScannerSphere(camera);
+
 	illumination_fbo->unbind();
 
 	// ==========================================
@@ -700,6 +850,30 @@ void Renderer::showUI()
 
 	if (ImGui::TreeNode("HDR / Tonemap")) {
 		ImGui::SliderFloat("Exposure", &tonemap_exposure, 0.1f, 8.0f);
+		ImGui::TreePop();
+	}
+
+	if (ImGui::TreeNode("Sci-Fi Scanner (T5.1)")) {
+		ImGui::Checkbox("Enable Scanner", &enable_scanner);
+		ImGui::Text("SPACE = trigger pulse");
+		ImGui::Text("Pulse: %s", scanner_active ? "running" : "idle");
+		if (ImGui::Button("Reset Defaults"))
+			resetScannerDefaults();
+		ImGui::SliderFloat("Max Radius", &scanner_max_radius, 5.0f, 100.0f);
+		ImGui::SliderFloat("Duration", &scanner_duration, 1.0f, 15.0f);
+		ImGui::ColorEdit3("Color", &scanner_color.x);
+		ImGui::SliderFloat("Intensity", &scanner_intensity, 0.5f, 8.0f);
+		ImGui::Text("Radius: %.2f  Elapsed: %.2fs", scanner_radius, scanner_elapsed);
+
+		ImGui::SeparatorText("Sphere Intersection (Mesh Expansion)");
+		ImGui::Checkbox("Show Sphere Mesh", &scanner_show_sphere);
+		ImGui::SliderFloat("Ground Height (Y)", &scanner_ground_height, -10.0f, 20.0f);
+		ImGui::SliderInt("Sub-lines (rings)", &scanner_ring_count, 1, 12);
+		ImGui::SliderFloat("Ring Spacing", &scanner_ring_spacing, 0.5f, 5.0f);
+		ImGui::SliderFloat("Contact Thickness", &scanner_contact_thickness, 0.05f, 2.0f);
+		ImGui::SliderFloat("Shell Strength", &scanner_rim_strength, 0.0f, 0.5f);
+		ImGui::SliderFloat("Shell Falloff", &scanner_sphere_rim, 0.5f, 6.0f);
+		ImGui::SliderFloat("Opacity", &scanner_sphere_alpha, 0.0f, 1.0f);
 		ImGui::TreePop();
 	}
 }

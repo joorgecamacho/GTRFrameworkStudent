@@ -10,6 +10,7 @@ deferred_global quad.vs deferred_global.fs
 deferred_light basic.vs deferred_light.fs
 ssao quad.vs ssao.fs
 tonemap quad.vs tonemap.fs
+scanner_sphere basic.vs scanner_sphere.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -554,6 +555,129 @@ void main()
     gbuffer_normal = vec4(N * 0.5 + 0.5, metalness);
 }
 
+\scanner
+
+// T5.1 Sci-Fi Scanner — Method B (all layers combined)
+vec3 applySciFiScanner(vec3 out_color, vec3 world_pos)
+{
+    // Method A uses the 3D sphere intersection; these screen-space layers are optional
+    if (u_scanner_enabled == 0 || u_scanner_active == 0 || u_scanner_screenspace == 0)
+        return out_color;
+
+    float dist = length(world_pos - u_scanner_origin);
+
+    // Distance behind the moving front (0 at the front, grows backwards)
+    float behind_front = u_scanner_radius - dist;
+
+    // Trail region: only the scanned band behind the front
+    float trail_zone = step(0.0, behind_front) * step(behind_front, u_scanner_trail_width);
+    // Energy is strongest near the front and dissolves toward the inner edge
+    float trail_dissolve = 1.0 - smoothstep(0.0, u_scanner_trail_width, behind_front);
+    trail_dissolve = pow(trail_dissolve, 1.5); // sharper falloff = more "scan sweep" feel
+    float trail_fade = trail_zone * trail_dissolve;
+
+    // --- Darken canvas (Phase 5): bluish high-contrast ground ---
+    vec3 darkened = min(out_color, u_scanner_darken_color);
+    out_color = mix(out_color, darkened, trail_fade * u_scanner_darken_amount);
+
+    // --- Wave-front ring (Phases 2-3): bright sharp core + soft halo ---
+    float edge = abs(dist - u_scanner_radius);
+    float core_w = u_scanner_pulse_width * 0.22;
+    float core = 1.0 - smoothstep(0.0, core_w, edge);
+    core = pow(saturate(core), u_scanner_sharpness);
+    float aa = fwidth(core);
+    core = smoothstep(0.5 - aa, 0.5 + aa, core);
+    // Wide additive halo around the leading edge (bloom-like)
+    float halo = 1.0 - smoothstep(0.0, u_scanner_pulse_width * 3.0, edge);
+    halo *= halo;
+    float shell_mask = step(dist, u_scanner_radius + u_scanner_pulse_width);
+    float ring = (core + halo * 0.4) * shell_mask;
+
+    // --- Holographic grid (Phase 4): thin concentric lines in the trail ---
+    float interval = u_scanner_grid_spacing * (1.0 + u_scanner_grid_scale * dist);
+    float phase = fract(dist / interval);
+    float line_dist = min(phase, 1.0 - phase) * interval;
+    float grid = 1.0 - smoothstep(0.0, u_scanner_grid_line_width, line_dist);
+    float grid_aa = fwidth(grid);
+    grid = smoothstep(0.5 - grid_aa, 0.5 + grid_aa, grid);
+    float grid_zone = step(dist, u_scanner_radius - u_scanner_pulse_width);
+    grid *= trail_fade * grid_zone;
+
+    // White hot guide line right behind the front
+    float guide = step(0.0, behind_front) * step(behind_front, interval * 0.9);
+    vec3 emit_color = mix(u_scanner_color, vec3(1.0), guide * 0.85);
+
+    // Front ring clearly dominates the trailing grid (real scanner look)
+    vec3 emission = vec3(0.0);
+    emission += emit_color * grid * u_scanner_grid_intensity * trail_dissolve;
+    emission += mix(u_scanner_color, vec3(1.0), 0.5) * ring * 1.6;
+    emission *= u_scanner_intensity;
+
+    // Soft HDR clamp — avoids blowout after additive stack
+    out_color = min(out_color + emission, vec3(24.0));
+
+    return out_color;
+}
+
+\scanner_sphere.fs
+
+#version 330 core
+
+// T5.1 METHOD A — Expanding sphere mesh + Depth-Intersection shader.
+// The bright line is drawn ONLY where the sphere polygons cross the scene
+// geometry (the contact ring), reading the scene depth from the G-Buffer.
+in vec3 v_world_position;
+in vec3 v_normal;
+
+uniform sampler2D u_depth_texture;      // scene depth (G-Buffer)
+uniform mat4 u_inverse_viewprojection;  // rebuild scene world pos
+uniform vec2 u_iRes;                     // 1 / screen size
+uniform vec3 u_camera_position;
+
+uniform vec3 u_scanner_color;
+uniform float u_scanner_intensity;
+uniform float u_contact_thickness;       // ring thickness (world meters)
+uniform float u_rim_power;               // faint shell so the bubble is visible
+uniform float u_rim_strength;            // how much shell to add (0 on trailing rings)
+uniform float u_sphere_alpha;
+
+out vec4 FragColor;
+
+void main()
+{
+    // 1. Where is this sphere fragment on screen?
+    vec2 uv = gl_FragCoord.xy * u_iRes;
+
+    // 2. Read the scene depth behind this fragment and rebuild its world pos
+    float scene_depth = texture(u_depth_texture, uv).x;
+    vec4 ndc = vec4(uv * 2.0 - 1.0, scene_depth * 2.0 - 1.0, 1.0);
+    vec4 wp = u_inverse_viewprojection * ndc;
+    vec3 scene_world = wp.xyz / wp.w;
+
+    // 3. INTERSECTION: bright where the sphere surface meets real geometry
+    float d = distance(scene_world, v_world_position);
+    float contact = 1.0 - smoothstep(0.0, u_contact_thickness, d);
+    contact *= step(scene_depth, 0.9999); // ignore the sky
+    contact = pow(contact, 1.5);           // tighten into a crisp line
+
+    // 4. Faint Fresnel shell so the growing bubble is visible in the air
+    vec3 N = normalize(v_normal);
+    vec3 V = normalize(u_camera_position - v_world_position);
+    float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), u_rim_power) * u_rim_strength;
+
+    // Visible volumetric shell: rim glow + faint inner fill so the dome reads
+    float shell = max(rim, u_rim_strength * 0.25);
+    float mask = max(contact, shell);
+    if (mask < 0.003)
+        discard;
+
+    // White-hot core fading to cyan, plus a glowing energy shell
+    vec3 core_col = mix(u_scanner_color, vec3(1.0), contact * 0.6);
+    vec3 color = core_col * contact * u_scanner_intensity + u_scanner_color * shell * 1.5;
+
+    FragColor = vec4(color, mask * u_sphere_alpha);
+}
+
 \deferred_global.fs
 
 #version 330 core
@@ -587,6 +711,27 @@ uniform mat4 u_shadow_vp;
 // SSAO
 uniform sampler2D u_ssao_texture;
 uniform int u_enable_ssao;
+
+// Sci-Fi Scanner (T5.1 — uniforms bound from Renderer::bindScannerUniforms)
+uniform int u_scanner_enabled;
+uniform int u_scanner_active;
+uniform int u_scanner_screenspace;
+uniform vec3 u_scanner_origin;
+uniform float u_scanner_radius;
+uniform float u_scanner_pulse_width;
+uniform vec3 u_scanner_color;
+uniform float u_scanner_intensity;
+uniform float u_scanner_sharpness;
+uniform float u_scanner_edge_width;
+uniform float u_scanner_grid_spacing;
+uniform float u_scanner_grid_scale;
+uniform float u_scanner_grid_line_width;
+uniform float u_scanner_grid_intensity;
+uniform float u_scanner_trail_width;
+uniform vec3 u_scanner_darken_color;
+uniform float u_scanner_darken_amount;
+
+#include "scanner"
 
 out vec4 FragColor;
 
@@ -656,7 +801,9 @@ void main()
         vec3 specular_brdf = cookTorranceSpecularBRDF(N, V, L, albedo, metalness, roughness);
         out_color += (diffuse_brdf + specular_brdf) * light_color * shadow * NdotL;
     }
-    
+
+    out_color = applySciFiScanner(out_color, world_pos);
+
     FragColor = vec4(out_color, 1.0);
 }
 
