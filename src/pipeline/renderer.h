@@ -82,6 +82,7 @@ namespace SCN {
 		float scan_pause_duration = 0.0f;    // Duración de la pausa (0.0s elimina el efecto trabado)
 		bool  scan_use_world_space = true;   // Habilitar reconstrucción 3D (para demo antes/después)
 		bool  scan_use_naive_darken = false; // Demo naive approach vs min() darken
+		float scan_line_interval = 1.2f;     // Intervalo de las líneas topográficas (frecuencia)
 		bool ssao_hemisphere = true; // true = SSAO+ (hemisferio), false = SSAO básico (esfera)
 		int ssao_num_samples = 32;   // Nº de muestras (recomendado 15-64)
 		float ssao_radius = 0.05f;   // Radio de búsqueda de oclusores

@@ -883,8 +883,8 @@ void Renderer::renderScifiScan(Camera* camera)
     scan_shader->setUniform("u_edge_intensity", 1.5f);
 
     // CAPA 4: Líneas holográficas (frac sobre distancia World Space)
-    // Escala menor: líneas cada 1.2 metros, grosor 0.04m
-    scan_shader->setUniform("u_line_interval",  1.2f);
+    // Escala menor: líneas cada scan_line_interval metros, grosor 0.04m
+    scan_shader->setUniform("u_line_interval",  scan_line_interval);
     scan_shader->setUniform("u_line_width",     0.04f);
     scan_shader->setUniform("u_line_color",     vec3(0.0f, 0.5f, 1.0f));
     scan_shader->setUniform("u_line_intensity", 2.0f);
@@ -1048,6 +1048,7 @@ void Renderer::showUI()
 				ImGui::SliderFloat("Trail Width (m)", &scan_trail_width, 1.0f, 30.0f);
 				ImGui::SliderFloat("Velocidad Expansion", &scan_expansion_speed, 0.5f, 5.0f);
 				ImGui::SliderFloat("Duracion Pausa (s)", &scan_pause_duration, 0.0f, 2.0f);
+				ImGui::SliderFloat("Frecuencia Lineas (Intervalo m)", &scan_line_interval, 0.2f, 10.0f);
 
 				ImGui::Separator();
 				ImGui::Text("--- Demo de Presentacion ---");
