@@ -22,7 +22,7 @@ The framework utilizes a **Deferred Rendering Pipeline** to decouple lighting co
 The diagram below illustrates the exact structure of our rendering pipeline and highlights where the **Sci-Fi Scan Post-process** is injected:
 
 ```mermaid
-graph TD
+graph LR
     A[Collect Renderables] --> B1[Generate Shadowmaps <br/><i>RenderSceneFlat</i>]
     A --> B2[Generate G-BUFFERS <br/><i>RenderSceneGBuffers</i>]
     B2 --> C[Compute SSAO]
@@ -173,3 +173,21 @@ To present this effect in class, we decoupled the temporal update loop from the 
 ### Future Work
 1. **Directional Cone Masking:** Incorporate a dot product mask using the player's forward vector to restrict the expansion to a 120-degree wedge, rather than a full 360-degree sphere.
 2. **Mesh Edge Highlighting (Sobel Operator):** Integrate a screen-space Sobel filter on the G-Buffer normals and depth within the scan radius to draw high-tech cybernetic outlines around rock and prop silhouettes, enhancing the digitizing aesthetic.
+
+---
+
+## 7. Alternative Method Comparison (Post-Processing vs. Geometric Sphere)
+
+During the design phase, an alternative approach was considered: **Geometric Mesh Expansion**. This method involves spawning an invisible 3D Sphere mesh in the scene and animating its scale over time. A specialized "Scene Depth Intersection Shader" applied to this sphere would output a bright line only at the pixels where the sphere's polygons intersect with the scene's terrain depth.
+
+If implemented in our custom C++ framework, the architectural differences would be massive:
+
+1. **CPU / Architecture:**
+   - *Geometric Sphere:* Requires creating a new `SCN::Node` with a `GFX::Mesh` (Sphere), adding it to the scene graph, and animating its scale matrix in the C++ `update()` loop. It operates in the **Forward Rendering** pass.
+   - *Our Post-Processing:* Requires no scene geometry. It operates as a full-screen quad in the **Deferred Rendering** pipeline, driven purely by mathematical uniforms passed to a post-process shader.
+
+2. **GPU / Shader Logic:**
+   - *Geometric Sphere:* The shader only performs a simple 1D depth comparison (`gl_FragCoord.z` vs `gbuffer_depth`). It cannot easily generate complex trailing grids, multi-interval spacing, or apply underlying terrain blending (Darken Blend) because it only renders exactly where the sphere's shell exists.
+   - *Our Post-Processing:* Reconstructs the exact 3D World Position of every pixel on screen using inverse view-projection matrices. This allows for infinite mathematical freedom to draw concentric rings, dynamic fading zones, and Photoshop-style color blending across the entire terrain.
+
+**Conclusion:** The Geometric Sphere method is a lightweight level-design trick suitable for simple outlines. We chose the **Post-Processing Method** because it is a true Graphics Engineering solution, providing the mathematical freedom required to achieve a multi-layered, premium-tier visual effect.

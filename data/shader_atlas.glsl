@@ -1075,6 +1075,8 @@ uniform float u_leading_intensity; // Brillo extra de la línea blanca delantera
 uniform float u_scan_opacity;    // Opacidad global del efecto [0..1] (fade in/out)
 uniform float u_charge_radius;   // Radio del círculo oscuro de carga que se contrae
 uniform float u_trail_width;     // Ancho del rastro en metros (desvanecimiento posterior)
+uniform float u_use_world_space; // Habilitar reconstrucción 3D (1.0 = Sí, 0.0 = No)
+uniform float u_use_naive_darken; // Usar multiplicación simple en lugar de min()
 
 out vec4 FragColor;
 
@@ -1107,8 +1109,14 @@ vec3 GetWorldPosition(vec2 screenUV, float rawDepth)
 // =============================================================================
 vec3 ApplyDarkenBlend(vec3 sceneColor, vec3 darkenColor, float mask)
 {
-    // min() componente a componente = el canal más oscuro siempre gana
-    vec3 blended = min(sceneColor, darkenColor);
+    vec3 blended;
+    if (u_use_naive_darken > 0.5) {
+        // Naive approach: Simple multiplication (crushes dark details)
+        blended = sceneColor * darkenColor;
+    } else {
+        // min() componente a componente = el canal más oscuro siempre gana
+        blended = min(sceneColor, darkenColor);
+    }
     // lerp: mezcla suave según la máscara del scanner y la fuerza del efecto
     return mix(sceneColor, blended, mask);
 }
@@ -1176,9 +1184,15 @@ void main()
     // --- CAPA 1: Reconstruir la posición 3D del píxel en el mundo ---
     vec3 worldPos = GetWorldPosition(uv, rawDepth);
 
-    // Distancia horizontal (plano XZ) desde el origen del scan
-    // Usar XZ hace que el efecto siga el suelo independientemente de la altura del terreno
-    float dist = distance(worldPos.xz, u_scan_origin.xz);
+    // Distancia del scan: en 3D real (con reconstrucción) o en 2D de pantalla (antes de reconstrucción)
+    float dist = 0.0;
+    if (u_use_world_space > 0.5) {
+        dist = distance(worldPos.xz, u_scan_origin.xz);
+    } else {
+        // Antes (Sin Reconstrucción 3D): Las líneas se calculan en base a la pantalla plana 2D.
+        // Esto crea un patrón de diana pegado a la lente que se desliza de forma errática al mover la cámara.
+        dist = distance(uv - vec2(0.5), vec2(0.0)) * 25.0 + rawDepth * 20.0;
+    }
 
     // Máscara general de área: 1.0 dentro del radio, 0.0 fuera
     float insideMask = step(dist, u_scan_radius);

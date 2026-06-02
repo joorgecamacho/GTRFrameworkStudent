@@ -78,6 +78,10 @@ namespace SCN {
 		float scan_time = 0.0f;              // Acumulador de tiempo (segundos)
 		long  last_scan_frame_time = 0;      // Timestamp del frame anterior
 		float scan_trail_width = 12.0f;      // Largo del rastro en metros (desvanecimiento posterior)
+		float scan_expansion_speed = 1.8f;   // Velocidad de expansión de la onda
+		float scan_pause_duration = 0.0f;    // Duración de la pausa (0.0s elimina el efecto trabado)
+		bool  scan_use_world_space = true;   // Habilitar reconstrucción 3D (para demo antes/después)
+		bool  scan_use_naive_darken = false; // Demo naive approach vs min() darken
 		bool ssao_hemisphere = true; // true = SSAO+ (hemisferio), false = SSAO básico (esfera)
 		int ssao_num_samples = 32;   // Nº de muestras (recomendado 15-64)
 		float ssao_radius = 0.05f;   // Radio de búsqueda de oclusores

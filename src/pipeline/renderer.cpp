@@ -864,6 +864,8 @@ void Renderer::renderScifiScan(Camera* camera)
     scan_shader->setUniform("u_scan_origin", scan_origin);
     scan_shader->setUniform("u_scan_radius", scan_radius);
     scan_shader->setUniform("u_scan_active", scan_active ? 1.0f : 0.0f);
+    scan_shader->setUniform("u_use_world_space", scan_use_world_space ? 1.0f : 0.0f);
+    scan_shader->setUniform("u_use_naive_darken", scan_use_naive_darken ? 1.0f : 0.0f);
     // PASO 6: Animación — opacidad global, círculo de carga y ancho del rastro
     scan_shader->setUniform("u_scan_opacity",       scan_opacity);
     scan_shader->setUniform("u_charge_radius",      scan_charge_radius);
@@ -1044,6 +1046,13 @@ void Renderer::showUI()
 				ImGui::Separator();
 				ImGui::Text("--- Physical / Visual Parameters ---");
 				ImGui::SliderFloat("Trail Width (m)", &scan_trail_width, 1.0f, 30.0f);
+				ImGui::SliderFloat("Velocidad Expansion", &scan_expansion_speed, 0.5f, 5.0f);
+				ImGui::SliderFloat("Duracion Pausa (s)", &scan_pause_duration, 0.0f, 2.0f);
+
+				ImGui::Separator();
+				ImGui::Text("--- Demo de Presentacion ---");
+				ImGui::Checkbox("Reconstruccion 3D (World Space)", &scan_use_world_space);
+				ImGui::Checkbox("Naive Darken Blend (Multiplicar)", &scan_use_naive_darken);
 				
 				if (scan_manual_mode) {
 					ImGui::SliderFloat("Wave Radius (m)", &scan_radius, 0.0f, scan_max_radius);
