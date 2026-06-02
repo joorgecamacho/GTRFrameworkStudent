@@ -996,6 +996,7 @@ void Renderer::showUI()
 
 	// === SCI-FI SCANNER (Unified) ===
 	if (ImGui::TreeNode("Sci-Fi Scanner (Unified)")) {
+		ImGui::PushItemWidth(-200.0f); // Evitar que se corten los textos de los sliders
 		const char* methods[] = { "Method A: Screen-Space Post-Process", "Method B: Geometric Mesh Expansion" };
 		int current_method = (int)scanner_method;
 		if (ImGui::Combo("Scanner Method", &current_method, methods, 2)) {
@@ -1092,6 +1093,7 @@ void Renderer::showUI()
 			ImGui::SliderFloat("Opacity", &scanner_sphere_alpha, 0.0f, 1.0f);
 		}
 
+		ImGui::PopItemWidth();
 		ImGui::TreePop();
 	}
 }
