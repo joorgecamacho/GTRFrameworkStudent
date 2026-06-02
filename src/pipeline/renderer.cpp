@@ -155,7 +155,7 @@ void Renderer::updateScanner(float dt)
 
 void Renderer::renderScannerSphere(Camera* camera)
 {
-	if (!enable_scanner || !scanner_active || !scanner_show_sphere)
+	if (!enable_scanner || !scanner_active)
 		return;
 	if (scanner_radius <= 0.01f)
 		return;
@@ -203,7 +203,7 @@ void Renderer::renderScannerSphere(Camera* camera)
 		shader->setUniform("u_scanner_intensity", scanner_intensity * fade);
 		shader->setUniform("u_sphere_alpha", scanner_sphere_alpha * fade);
 		// Only the leading shell shows the faint volumetric bubble shell
-		shader->setUniform("u_rim_strength", (i == 0) ? scanner_rim_strength : 0.0f);
+		shader->setUniform("u_rim_strength", (i == 0 && scanner_show_sphere) ? scanner_rim_strength : 0.0f);
 
 		sphere.render(GL_TRIANGLES);
 	}
