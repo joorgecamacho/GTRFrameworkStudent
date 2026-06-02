@@ -48,6 +48,192 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	ssao_sample_points = generateSpherePoints(ssao_num_samples, 1.0f, ssao_hemisphere);
 }
 
+void Renderer::triggerScanner(const Vector3f& origin)
+{
+	if (scanner_method == SCANNER_METHOD_A) {
+		scan_origin        = origin;
+		scan_radius        = 0.0f;
+		scan_opacity       = 0.0f;
+		scan_charge_radius = 2.5f;
+		scan_start_time    = getTime();
+		scan_time          = 0.0f;
+		last_scan_frame_time = getTime();
+		scan_paused        = false;
+		scan_active        = true;
+	}
+	else if (scanner_method == SCANNER_METHOD_B) {
+		// Drop the origin to ground level so the sphere's equator cuts the floor
+		// plane in a full expanding circle (radar rings). A center up in the air
+		// would only intersect the ground once the radius exceeds its height.
+		scanner_origin = Vector3f(origin.x, scanner_ground_height, origin.z);
+		scanner_radius = 0.0f;
+		scanner_elapsed = 0.0f;
+		scanner_active = true;
+	}
+}
+
+float Renderer::evaluateScannerRadius() const
+{
+	if (scanner_duration <= 0.0f)
+		return scanner_max_radius;
+
+	float t = scanner_elapsed / scanner_duration;
+	if (t > 1.0f) t = 1.0f;
+
+	// Smoothstep: gentle start with "weight" but still reaches a large radius
+	// well before the end, so the rings are visible across the scene.
+	float eased = t * t * (3.0f - 2.0f * t);
+	return scanner_max_radius * eased;
+}
+
+void Renderer::updateScanner(float dt)
+{
+	if (scanner_method == SCANNER_METHOD_A) {
+		if (!scan_active)
+			return;
+
+		if (!scan_manual_mode && !scan_paused) {
+			scan_time += dt;
+		}
+
+		float t = scan_time;
+
+		// ============================================================
+		// FASE 1 (0.0s — 0.5s): CARGA — Círculo oscuro que se contrae
+		// El radio crece lentamente, scan_opacity sube de 0 a 1.
+		// Un círculo de carga se contrae hacia el jugador.
+		// ============================================================
+		if (t < 0.5f) {
+			float phase_t      = t / 0.5f;
+			scan_radius        = phase_t * phase_t * 2.0f;
+			scan_charge_radius = (1.0f - phase_t) * 2.5f;
+			scan_opacity       = phase_t;
+		}
+		// ============================================================
+		// FASE 2 (0.5s — 0.5 + scan_pause_duration): PAUSA — Tensión antes de la onda
+		// ============================================================
+		else if (t < 0.5f + scan_pause_duration) {
+			scan_radius        = 2.0f;
+			scan_charge_radius = 0.0f;
+			scan_opacity       = 1.0f;
+		}
+		// ============================================================
+		// FASE 3 (0.5s + scan_pause_duration +): EXPANSIÓN — Onda rápida
+		// ============================================================
+		else {
+			float et           = t - (0.5f + scan_pause_duration);
+			// (1 - e^-kt): curva que sube rápido y se aplana
+			scan_radius        = 2.0f + (1.0f - expf(-et * scan_expansion_speed)) * (scan_max_radius - 2.0f);
+			scan_charge_radius = 0.0f;
+			// Fade-out cuando el radio supera el 75% del máximo
+			float progress     = scan_radius / scan_max_radius;
+			scan_opacity       = (progress > 0.75f)
+							  ? clamp((1.0f - progress) / 0.25f, 0.0f, 1.0f)
+							  : 1.0f;
+			// Apagar automáticamente al terminar si no estamos en modo manual
+			if (scan_opacity <= 0.01f && !scan_manual_mode) {
+				scan_active = false;
+				scan_radius = 0.0f;
+			}
+		}
+	}
+	else if (scanner_method == SCANNER_METHOD_B) {
+		if (!scanner_active)
+			return;
+
+		scanner_elapsed += dt;
+		if (scanner_elapsed >= scanner_duration) {
+			scanner_active = false;
+			scanner_elapsed = 0.0f;
+			scanner_radius = 0.0f;
+			return;
+		}
+
+		scanner_radius = evaluateScannerRadius();
+	}
+}
+
+void Renderer::renderScannerSphere(Camera* camera)
+{
+	if (!enable_scanner || !scanner_active || !scanner_show_sphere)
+		return;
+	if (scanner_radius <= 0.01f)
+		return;
+
+	GFX::Shader* shader = GFX::Shader::Get("scanner_sphere");
+	if (!shader)
+		return;
+
+	// REQUIRED render state for the intersection to ALWAYS be visible:
+	//  - Additive blend (energy look, never hidden by background)
+	//  - Depth TEST DISABLED: we need the sphere fragments that fall behind
+	//    geometry, otherwise they'd be culled before we can detect contact.
+	//  - Depth mask OFF: the bubble never writes depth (it is not solid).
+	//  - Cull back faces: one clean front-facing contact line per shell.
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_CULL_FACE); // both hemispheres → full intersection circle
+
+	shader->enable();
+	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 0);
+	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+	shader->setUniform("u_iRes", vec2(1.0f / (float)illumination_fbo->width, 1.0f / (float)illumination_fbo->height));
+	shader->setUniform("u_scanner_color", scanner_color);
+	shader->setUniform("u_contact_thickness", scanner_contact_thickness);
+	shader->setUniform("u_rim_power", scanner_sphere_rim);
+
+	// Multiple concentric expanding shells = a leading ring + trailing sub-lines.
+	// Each shell is the same sphere mesh scaled to a slightly smaller radius.
+	for (int i = 0; i < scanner_ring_count; ++i) {
+		float r = scanner_radius - i * scanner_ring_spacing;
+		if (r <= 0.05f)
+			continue;
+
+		float fade = 1.0f - (float)i / (float)scanner_ring_count; // trailing rings dimmer
+
+		Matrix44 model;
+		model.setTranslation(scanner_origin.x, scanner_origin.y, scanner_origin.z);
+		model.scale(r, r, r);
+
+		shader->setUniform("u_model", model);
+		shader->setUniform("u_scanner_intensity", scanner_intensity * fade);
+		shader->setUniform("u_sphere_alpha", scanner_sphere_alpha * fade);
+		// Only the leading shell shows the faint volumetric bubble shell
+		shader->setUniform("u_rim_strength", (i == 0) ? scanner_rim_strength : 0.0f);
+
+		sphere.render(GL_TRIANGLES);
+	}
+
+	shader->disable();
+
+	// Restore state
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_LESS);
+	glCullFace(GL_BACK);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_BLEND);
+}
+
+void Renderer::resetScannerDefaults()
+{
+	scanner_max_radius = 45.0f;
+	scanner_color = Vector3f(0.1f, 0.85f, 1.0f);
+	scanner_intensity = 3.5f;
+	scanner_duration = 7.0f;
+	scanner_show_sphere = true;
+	scanner_sphere_rim = 2.5f;
+	scanner_sphere_alpha = 1.0f;
+	scanner_contact_thickness = 0.35f;
+	scanner_rim_strength = 0.35f;
+	scanner_ring_count = 6;
+	scanner_ring_spacing = 1.8f;
+}
+
 void Renderer::setupScene()
 {
 	if (scene->skybox_filename.size())
@@ -565,7 +751,10 @@ void Renderer::renderDeferred(Camera* camera) {
 	glDepthFunc(GL_LESS);
 	glFrontFace(GL_CCW);
 	glDisable(GL_BLEND);
-	
+
+	// T5.1: visible expanding bubble (rendered into HDR buffer, depth-tested)
+	renderScannerSphere(camera);
+
 	illumination_fbo->unbind();
 
 	// ==========================================
@@ -583,66 +772,9 @@ void Renderer::renderDeferred(Camera* camera) {
 	}
 
 	// Pase de post-procesado: efecto Sci-Fi Scan (se aplica sobre el color ya tonemapeado)
-	// El update de la animación se hace aquí, antes del render, para tener el radio actualizado.
-	if (scan_active) {
-		// 1. Calcular delta de tiempo local y acumular
-		long current_time = getTime();
-		float dt = (last_scan_frame_time == 0) ? 0.0f : (current_time - last_scan_frame_time) * 0.001f;
-		last_scan_frame_time = current_time;
-
-		if (!scan_manual_mode && !scan_paused) {
-			scan_time += dt;
-		}
-
-		// Usar scan_time como el tiempo 't' de animación
-		float t = scan_time;
-
-		// ============================================================
-		// FASE 1 (0.0s — 0.5s): CARGA — Círculo oscuro que se contrae
-		// El radio crece lentamente, scan_opacity sube de 0 a 1.
-		// Un círculo de carga se contrae hacia el jugador.
-		// ============================================================
-		if (t < 0.5f) {
-			float phase_t      = t / 0.5f;               // [0..1] dentro de la fase
-			scan_radius        = phase_t * phase_t * 2.0f; // crece lento (ease-in cuadrático)
-			scan_charge_radius = (1.0f - phase_t) * 2.5f; // contrae de 2.5m a 0
-			scan_opacity       = phase_t;                 // fade-in del efecto
-		}
-		// ============================================================
-		// FASE 2 (0.5s — 0.8s): PAUSA — Tensión antes de la onda
-		// El radio para, el círculo de carga desaparece, opacidad máxima.
-		// ============================================================
-		else if (t < 0.8f) {
-			scan_radius        = 2.0f;
-			scan_charge_radius = 0.0f;
-			scan_opacity       = 1.0f;
-		}
-		// ============================================================
-		// FASE 3 (0.8s+): EXPANSIÓN — Onda rápida con decaimiento exponencial
-		// La velocidad empieza alta y decae: simula "energía que se agota".
-		// Al acercarse al radio máximo, el efecto hace fade-out.
-		// ============================================================
-		else {
-			float et           = t - 0.8f;               // tiempo desde inicio de fase 3
-			// (1 - e^-kt): curva que sube rápido y se aplana — k=1.8 controla la velocidad
-			scan_radius        = 2.0f + (1.0f - expf(-et * 1.8f)) * (scan_max_radius - 2.0f);
-			scan_charge_radius = 0.0f;
-			// Fade-out cuando el radio supera el 75% del máximo
-			float progress     = scan_radius / scan_max_radius;
-			scan_opacity       = (progress > 0.75f)
-							  ? clamp((1.0f - progress) / 0.25f, 0.0f, 1.0f)
-							  : 1.0f;
-			// Apagar automáticamente al terminar si no estamos en modo manual
-			if (scan_opacity <= 0.01f && !scan_manual_mode) {
-				scan_active = false;
-				scan_radius = 0.0f;
-			}
-		}
-	} else {
-		// Resetear la marca de tiempo cuando esté inactivo
-		last_scan_frame_time = 0;
+	if (scanner_method == SCANNER_METHOD_A && scan_active) {
+		renderScifiScan(camera);
 	}
-	renderScifiScan(camera);
 	
 	// 2. Copiamos la profundidad usando un shader en lugar de glBlitFramebuffer
 	// ya que el glBlitFramebuffer al FBO por defecto (0) falla por incompatibilidad
@@ -860,76 +992,96 @@ void Renderer::showUI()
 		ImGui::TreePop();
 	}
 
-	// === SCI-FI SCAN Controls ===
-	if (ImGui::TreeNode("Sci-Fi Scan")) {
-		ImGui::Text("Estado: %s", scan_active ? "ACTIVO" : "INACTIVO");
-		
-		if (ImGui::Button("Activar Scan")) {
-			// Tomar el origen desde la posición de la cámara actual
-			scan_origin     = Camera::current->eye;
-			scan_radius     = 0.0f;
-			scan_opacity    = 0.0f;
-			scan_charge_radius = 2.5f;
-			scan_start_time = getTime(); // registrar el momento de activación
-			scan_time       = 0.0f;
-			last_scan_frame_time = getTime();
-			scan_paused     = false;
-			scan_active     = true;
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Desactivar")) {
-			scan_active = false;
-			scan_radius = 0.0f;
-			scan_time   = 0.0f;
+	// === SCI-FI SCANNER (Unified) ===
+	if (ImGui::TreeNode("Sci-Fi Scanner (Unified)")) {
+		const char* methods[] = { "Method A: Screen-Space Post-Process", "Method B: Geometric Mesh Expansion" };
+		int current_method = (int)scanner_method;
+		if (ImGui::Combo("Scanner Method", &current_method, methods, 2)) {
+			scanner_method = (eScannerMethod)current_method;
 		}
 
-		if (scan_active) {
-			ImGui::Separator();
-			ImGui::Text("--- Controles de Simulación ---");
+		ImGui::Separator();
+
+		if (scanner_method == SCANNER_METHOD_A) {
+			ImGui::Text("Method A Status: %s", scan_active ? "ACTIVE" : "INACTIVE");
 			
-			// Checkbox para el modo manual
-			ImGui::Checkbox("Modo Manual (Timeline scrubbing)", &scan_manual_mode);
-			
-			if (scan_manual_mode) {
-				// En modo manual, el usuario controla scan_time a través de un slider de timeline
-				ImGui::SliderFloat("Línea de Tiempo (s)", &scan_time, 0.0f, 3.0f);
-				ImGui::Text("Scrubbing manual activo.");
-			} else {
-				// En modo automático, podemos pausar/reanudar
-				if (scan_paused) {
-					if (ImGui::Button("Reanudar (Play)")) {
-						scan_paused = false;
-						last_scan_frame_time = getTime(); // Evitar saltos de tiempo
-					}
+			if (ImGui::Button("Trigger Scan (Method A)")) {
+				triggerScanner(Camera::current->eye);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Deactivate")) {
+				scan_active = false;
+				scan_radius = 0.0f;
+				scan_time   = 0.0f;
+			}
+
+			if (scan_active) {
+				ImGui::Separator();
+				ImGui::Text("--- Simulation Controls ---");
+				
+				ImGui::Checkbox("Manual Mode (Timeline scrubbing)", &scan_manual_mode);
+				
+				if (scan_manual_mode) {
+					ImGui::SliderFloat("Timeline (s)", &scan_time, 0.0f, 3.0f);
+					ImGui::Text("Manual scrubbing active.");
 				} else {
-					if (ImGui::Button("Pausar (Pause)")) {
-						scan_paused = true;
+					if (scan_paused) {
+						if (ImGui::Button("Resume (Play)")) {
+							scan_paused = false;
+							last_scan_frame_time = getTime();
+						}
+					} else {
+						if (ImGui::Button("Pause")) {
+							scan_paused = true;
+						}
 					}
+					
+					float progress_fraction = scan_time / 3.0f;
+					ImGui::Text("Auto Progress:");
+					ImGui::ProgressBar(progress_fraction > 1.0f ? 1.0f : progress_fraction, ImVec2(-1, 0));
 				}
 				
-				// Mostrar el tiempo como una barra de progreso elegante
-				float progress_fraction = scan_time / 3.0f;
-				ImGui::Text("Progreso automático:");
-				ImGui::ProgressBar(progress_fraction > 1.0f ? 1.0f : progress_fraction, ImVec2(-1, 0));
-			}
-			
-			ImGui::Separator();
-			ImGui::Text("--- Parámetros Físicos / Visuales ---");
-			// Deslizador para ajustar el ancho del rastro de desvanecimiento
-			ImGui::SliderFloat("Largo del Rastro (m)", &scan_trail_width, 1.0f, 30.0f);
-			
-			// Mostrar valores calculados en tiempo real (o editables si es manual libre)
-			if (scan_manual_mode) {
-				ImGui::SliderFloat("Radio Onda (m)", &scan_radius, 0.0f, scan_max_radius);
-				ImGui::SliderFloat("Opacidad Efecto", &scan_opacity, 0.0f, 1.0f);
-				ImGui::SliderFloat("Radio Carga (m)", &scan_charge_radius, 0.0f, 5.0f);
-			} else {
-				ImGui::Text("Radio calculado: %.2f m", scan_radius);
-				ImGui::Text("Opacidad calculada: %.2f", scan_opacity);
-				ImGui::Text("Carga calculada: %.2f m", scan_charge_radius);
+				ImGui::Separator();
+				ImGui::Text("--- Physical / Visual Parameters ---");
+				ImGui::SliderFloat("Trail Width (m)", &scan_trail_width, 1.0f, 30.0f);
+				
+				if (scan_manual_mode) {
+					ImGui::SliderFloat("Wave Radius (m)", &scan_radius, 0.0f, scan_max_radius);
+					ImGui::SliderFloat("Effect Opacity", &scan_opacity, 0.0f, 1.0f);
+					ImGui::SliderFloat("Charge Radius (m)", &scan_charge_radius, 0.0f, 5.0f);
+				} else {
+					ImGui::Text("Calculated Radius: %.2f m", scan_radius);
+					ImGui::Text("Calculated Opacity: %.2f", scan_opacity);
+					ImGui::Text("Calculated Charge: %.2f m", scan_charge_radius);
+				}
 			}
 		}
-		
+		else if (scanner_method == SCANNER_METHOD_B) {
+			ImGui::Checkbox("Enable Scanner (Method B)", &enable_scanner);
+			ImGui::Text("SPACE = trigger pulse");
+			ImGui::Text("Pulse: %s", scanner_active ? "running" : "idle");
+			if (ImGui::Button("Reset Defaults"))
+				resetScannerDefaults();
+			if (ImGui::Button("Trigger Scan (Method B)")) {
+				triggerScanner(Camera::current->eye);
+			}
+			ImGui::SliderFloat("Max Radius", &scanner_max_radius, 5.0f, 100.0f);
+			ImGui::SliderFloat("Duration", &scanner_duration, 1.0f, 15.0f);
+			ImGui::ColorEdit3("Color", &scanner_color.x);
+			ImGui::SliderFloat("Intensity", &scanner_intensity, 0.5f, 8.0f);
+			ImGui::Text("Radius: %.2f  Elapsed: %.2fs", scanner_radius, scanner_elapsed);
+
+			ImGui::SeparatorText("Sphere Intersection (Mesh Expansion)");
+			ImGui::Checkbox("Show Sphere Mesh", &scanner_show_sphere);
+			ImGui::SliderFloat("Ground Height (Y)", &scanner_ground_height, -10.0f, 20.0f);
+			ImGui::SliderInt("Sub-lines (rings)", &scanner_ring_count, 1, 12);
+			ImGui::SliderFloat("Ring Spacing", &scanner_ring_spacing, 0.5f, 5.0f);
+			ImGui::SliderFloat("Contact Thickness", &scanner_contact_thickness, 0.05f, 2.0f);
+			ImGui::SliderFloat("Shell Strength", &scanner_rim_strength, 0.0f, 0.5f);
+			ImGui::SliderFloat("Shell Falloff", &scanner_sphere_rim, 0.5f, 6.0f);
+			ImGui::SliderFloat("Opacity", &scanner_sphere_alpha, 0.0f, 1.0f);
+		}
+
 		ImGui::TreePop();
 	}
 }

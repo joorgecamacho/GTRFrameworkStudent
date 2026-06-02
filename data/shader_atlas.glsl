@@ -11,6 +11,7 @@ deferred_light basic.vs deferred_light.fs
 ssao quad.vs ssao.fs
 tonemap quad.vs tonemap.fs
 scifi_scan quad.vs scifi_scan.fs
+scanner_sphere basic.vs scanner_sphere.fs
 \perturbNormal
 
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -555,6 +556,65 @@ void main()
     gbuffer_normal = vec4(N * 0.5 + 0.5, metalness);
 }
 
+\scanner_sphere.fs
+
+#version 330 core
+
+// T5.1 METHOD A — Expanding sphere mesh + Depth-Intersection shader.
+// The bright line is drawn ONLY where the sphere polygons cross the scene
+// geometry (the contact ring), reading the scene depth from the G-Buffer.
+in vec3 v_world_position;
+in vec3 v_normal;
+
+uniform sampler2D u_depth_texture;      // scene depth (G-Buffer)
+uniform mat4 u_inverse_viewprojection;  // rebuild scene world pos
+uniform vec2 u_iRes;                     // 1 / screen size
+uniform vec3 u_camera_position;
+
+uniform vec3 u_scanner_color;
+uniform float u_scanner_intensity;
+uniform float u_contact_thickness;       // ring thickness (world meters)
+uniform float u_rim_power;               // faint shell so the bubble is visible
+uniform float u_rim_strength;            // how much shell to add (0 on trailing rings)
+uniform float u_sphere_alpha;
+
+out vec4 FragColor;
+
+void main()
+{
+    // 1. Where is this sphere fragment on screen?
+    vec2 uv = gl_FragCoord.xy * u_iRes;
+
+    // 2. Read the scene depth behind this fragment and rebuild its world pos
+    float scene_depth = texture(u_depth_texture, uv).x;
+    vec4 ndc = vec4(uv * 2.0 - 1.0, scene_depth * 2.0 - 1.0, 1.0);
+    vec4 wp = u_inverse_viewprojection * ndc;
+    vec3 scene_world = wp.xyz / wp.w;
+
+    // 3. INTERSECTION: bright where the sphere surface meets real geometry
+    float d = distance(scene_world, v_world_position);
+    float contact = 1.0 - smoothstep(0.0, u_contact_thickness, d);
+    contact *= step(scene_depth, 0.9999); // ignore the sky
+    contact = pow(contact, 1.5);           // tighten into a crisp line
+
+    // 4. Faint Fresnel shell so the growing bubble is visible in the air
+    vec3 N = normalize(v_normal);
+    vec3 V = normalize(u_camera_position - v_world_position);
+    float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), u_rim_power) * u_rim_strength;
+
+    // Visible volumetric shell: rim glow + faint inner fill so the dome reads
+    float shell = max(rim, u_rim_strength * 0.25);
+    float mask = max(contact, shell);
+    if (mask < 0.003)
+        discard;
+
+    // White-hot core fading to cyan, plus a glowing energy shell
+    vec3 core_col = mix(u_scanner_color, vec3(1.0), contact * 0.6);
+    vec3 color = core_col * contact * u_scanner_intensity + u_scanner_color * shell * 1.5;
+
+    FragColor = vec4(color, mask * u_sphere_alpha);
+}
+
 \deferred_global.fs
 
 #version 330 core
@@ -657,7 +717,7 @@ void main()
         vec3 specular_brdf = cookTorranceSpecularBRDF(N, V, L, albedo, metalness, roughness);
         out_color += (diffuse_brdf + specular_brdf) * light_color * shadow * NdotL;
     }
-    
+
     FragColor = vec4(out_color, 1.0);
 }
 
